@@ -247,22 +247,22 @@ statusConditions:
     reason: "{{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}JobSucceeded{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}JobFailed{{else}}JobRunning{{end}}"
     message: "Job {{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}completed successfully{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}failed{{else}}is running with {{.resource.status.active}} active pods{{end}}"
 
-# CAPG GCPCluster controller
+# Config Connector DNS controller
 statusConditions:
   - name: "Applied"
     status: "True"
-    reason: "GCPClusterCreated"
-    message: "GCPCluster resource has been created"
+    reason: "DNSRecordSetCreated"
+    message: "DNS record set has been created"
 
   - name: "Available"
-    status: "{{if .resource.status.ready}}True{{else}}Unknown{{end}}"
-    reason: "{{if .resource.status.ready}}InfrastructureReady{{else}}InfrastructureProvisioning{{end}}"
-    message: "GCP infrastructure {{if .resource.status.ready}}is ready{{else}}is being provisioned{{end}}"
+    status: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{.status}}{{end}}{{end}}{{else}}Unknown{{end}}"
+    reason: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}DNSRecordReady{{else}}DNSRecordNotReady{{end}}{{end}}{{end}}{{else}}DNSRecordPending{{end}}"
+    message: "DNS record {{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}is ready{{else}}{{.message}}{{end}}{{end}}{{end}}{{else}}is being processed{{end}}"
 
   - name: "Healthy"
-    status: "{{if .resource.status.network.ready}}True{{else}}False{{end}}"
-    reason: "{{if .resource.status.network.ready}}NetworkHealthy{{else}}NetworkConfiguring{{end}}"
-    message: "VPC {{.resource.status.network.name}} {{if .resource.status.network.ready}}is healthy{{else}}is being configured{{end}}"
+    status: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}True{{else}}False{{end}}{{else}}Unknown{{end}}"
+    reason: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}DNSRecordSynced{{else}}DNSRecordOutOfSync{{end}}{{else}}DNSRecordSyncPending{{end}}"
+    message: "DNS record {{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}is in sync with desired state{{else}}is being updated to match desired state{{end}}{{else}}sync status is unknown{{end}}"
 
 # HyperShift HostedCluster controller
 statusConditions:
@@ -349,7 +349,7 @@ func (c *Controller) isImmutableResourceKind(kind string) bool {
 #### Strategy Decision Matrix
 
 **`updateStrategy: "in_place"`** (Default):
-- ✅ **Best for**: CAPG/CAPI Custom Resources, Deployments, ConfigMaps, Secrets
+- ✅ **Best for**: Config Connector resources, Deployments, ConfigMaps, Secrets, Custom Resources
 - ✅ **Benefits**: Efficient, maintains resource history, works with operators
 - ✅ **Operation**: Updates existing resource spec when cluster generation changes
 - ❌ **Not suitable**: Jobs, Pods (immutable resources)
@@ -367,16 +367,16 @@ func (c *Controller) isImmutableResourceKind(kind string) bool {
 apiVersion: cls.redhat.com/v1alpha1
 kind: ControllerConfig
 metadata:
-  name: gcp-infrastructure
+  name: cluster-dns-management
 spec:
   resourceManagement:
     updateStrategy: "in_place"  # Default - no cleanup needed
 
   resourceTemplate: |
-    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-    kind: GCPCluster
+    apiVersion: dns.cnrm.cloud.google.com/v1beta1
+    kind: DNSRecordSet
     metadata:
-      name: "{{.cluster.name}}"  # Same name always
+      name: "{{.cluster.name}}-api-dns"  # Same name always
 ```
 
 #### Versioned Configuration with Cleanup
@@ -531,12 +531,12 @@ This provides:
 
 #### Event Flow Examples
 
-**In-Place Strategy** (e.g., GCPCluster):
+**In-Place Strategy** (e.g., DNSRecordSet):
 ```
-Gen 1 (created)   → Create gcp-cluster-abc → Report status
-Gen 1 (reconcile) → Update gcp-cluster-abc → Report status
-Gen 2 (updated)   → Update gcp-cluster-abc spec → Report status
-Gen 2 (reconcile) → Check gcp-cluster-abc status → Report status
+Gen 1 (created)   → Create dns-record-abc → Report status
+Gen 1 (reconcile) → Update dns-record-abc → Report status
+Gen 2 (updated)   → Update dns-record-abc spec → Report status
+Gen 2 (reconcile) → Check dns-record-abc status → Report status
 ```
 
 **Versioned Strategy** (e.g., Jobs):
@@ -638,7 +638,7 @@ These are the controller's interpretation of what's happening:
 #### 2. Resource Status (Raw)
 The complete, unfiltered status from the actual Kubernetes resource:
 - **Job**: `.status` with conditions, active/succeeded counts, completion time
-- **GCPCluster**: `.status` with ready flag, network info, failure reasons
+- **Config Connector DNSRecordSet**: `.status` with conditions, observedState, and DNS record details
 - **HostedCluster**: `.status` with version info, kubeconfig, conditions
 
 This gives cls-backend both:
@@ -686,7 +686,7 @@ Every status report to cls-backend automatically includes:
     }
   ],
   "resource_status": {
-    // Raw status from the Kubernetes resource (Job, GCPCluster, etc.)
+    // Raw status from the Kubernetes resource (Job, DNSRecordSet, etc.)
     "generation": 1,  // Resource's current generation (.metadata.generation)
     // No observed_generation for Jobs since they're immutable
     "conditions": [
@@ -728,21 +728,27 @@ Every status report to cls-backend automatically includes:
 }
 ```
 
-**GCPCluster Status (CAPG)**:
+**Config Connector DNSRecordSet Status**:
 ```json
 "resource_status": {
-  "generation": 2,  // GCPCluster was updated once (e.g., network config changed)
-  "observed_generation": 2,  // CAPG controller has processed generation 2
-  "ready": true,
-  "network": {
-    "name": "my-cluster-network",
-    "ready": true,
-    "selfLink": "https://www.googleapis.com/compute/v1/projects/my-project/global/networks/my-cluster-network"
-  },
-  "failureDomains": {
-    "us-central1-a": {
-      "controlPlane": true
+  "generation": 1,  // DNSRecordSet created once
+  "observed_generation": 1,  // Config Connector has processed generation 1
+  "conditions": [
+    {
+      "type": "Ready",
+      "status": "True",
+      "lastTransitionTime": "2024-01-15T10:30:00Z",
+      "reason": "UpToDate",
+      "message": "The resource is up to date"
     }
+  ],
+  "observedState": {
+    "name": "production-east.example.com.",
+    "type": "A",
+    "ttl": 300,
+    "rrdatas": [
+      "34.123.45.67"
+    ]
   }
 }
 ```
