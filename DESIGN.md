@@ -186,9 +186,78 @@ spec:
 1. **Event Received**: Controller gets cluster event (created/updated/deleted/reconcile)
 2. **Fetch Cluster Spec**: Get current cluster spec from cls-backend API (includes generation)
 3. **Precondition Check**: Evaluate optional preconditions against cluster spec
-4. **Resource Creation**: Render and create Kubernetes resource from template (if not exists)
-5. **Status Check**: Read current resource status
-6. **Report Status**: Send current status back to cls-backend with observedGeneration
+4. **Status Reporting**: Always report status, even if preconditions fail
+5. **Resource Creation**: Render and create Kubernetes resource from template (if preconditions pass)
+6. **Status Check**: Read current resource status
+7. **Report Status**: Send current status back to cls-backend with observedGeneration
+
+### Precondition Failure Handling
+
+When preconditions are not met, the controller still reports status to provide visibility:
+
+```go
+func (c *Controller) reportPreconditionFailure(cluster *Cluster) error {
+    failedPreconditions := c.getFailedPreconditions(cluster)
+
+    status := &StatusReport{
+        ClusterID:           cluster.ID,
+        ControllerName:      c.config.Name,
+        ObservedGeneration:  cluster.Generation,
+        Conditions: []Condition{
+            {
+                Name:    "Applied",
+                Status:  "False",
+                Reason:  "PreconditionsNotMet",
+                Message: fmt.Sprintf("Preconditions not met: %s", strings.Join(failedPreconditions, ", ")),
+            },
+        },
+        ResourceStatus: nil, // No resource created
+        Timestamp:      time.Now(),
+    }
+
+    return c.apiClient.ReportStatus(ctx, status)
+}
+```
+
+#### Example: DNS Sub-Zone Controller Precondition Failure
+
+**Cluster that fails preconditions**:
+```json
+{
+  "id": "cluster-456",
+  "name": "development-cluster",
+  "generation": 10,
+  "spec": {
+    "provider": "aws",  // Not GCP
+    "infrastructure_type": "hypershift"
+    // Missing: dns_management_enabled field
+  }
+}
+```
+
+**Status Report**:
+```json
+{
+  "cluster_id": "cluster-456",
+  "controller_name": "hypershift-dns-subzone",
+  "observed_generation": 10,
+  "conditions": [
+    {
+      "name": "Applied",
+      "status": "False",
+      "reason": "PreconditionsNotMet",
+      "message": "Preconditions not met: spec.provider must equal 'gcp' (got 'aws'), spec.dns_management_enabled must exist"
+    }
+  ],
+  "resource_status": null,
+  "timestamp": "2024-01-15T10:30:00Z"
+}
+```
+
+This approach ensures:
+- **Complete visibility**: cls-backend knows the controller evaluated the cluster
+- **Clear debugging**: Users understand exactly why the controller didn't act
+- **Consistent reporting**: Every controller evaluation results in a status report
 
 ### Precondition Examples
 ```yaml
@@ -301,11 +370,27 @@ The controller operates on a simple principle: **report what you see right now**
 3. **cluster.reconcile**: (repeat) Check resource status, report current state
 4. **cluster.reconcile**: Resource completed → report final success/failure
 
-#### Status Progression Example
+#### Status Progression Examples
+
+**Successful Path**:
 ```
 Event 1 (created):  Create Job → Report "Applied: True, Available: Unknown"
 Event 2 (reconcile): Job running → Report "Applied: True, Available: Unknown"
 Event 3 (reconcile): Job completed → Report "Applied: True, Available: True"
+```
+
+**Precondition Failure Path**:
+```
+Event 1 (created):  Preconditions fail → Report "Applied: False, reason: PreconditionsNotMet"
+Event 2 (reconcile): Preconditions still fail → Report "Applied: False, reason: PreconditionsNotMet"
+Event 3 (updated): Cluster spec fixed, preconditions pass → Create Job → Report "Applied: True, Available: Unknown"
+```
+
+**Resource Creation Failure Path**:
+```
+Event 1 (created):  Template render fails → Report "Applied: False, reason: TemplateRenderFailed"
+Event 2 (reconcile): Permission denied → Report "Applied: False, reason: ResourceCreationFailed"
+Event 3 (reconcile): Permissions fixed → Create Job → Report "Applied: True, Available: Unknown"
 ```
 
 The cls-backend scheduler determines how often to send reconcile events based on the resource type and expected completion time.
@@ -922,13 +1007,15 @@ func (c *Controller) HandleClusterEvent(event *ClusterEvent) error {
 
     // 2. Check preconditions (simple field comparisons)
     if !c.evaluatePreconditions(cluster) {
-        return nil // Skip this event
+        // Report status indicating preconditions not met
+        return c.reportPreconditionFailure(cluster)
     }
 
     // 3. Get or create resource (fast template render)
     resource, err := c.getOrCreateResource(cluster)
     if err != nil {
-        return err
+        // Report resource creation failure
+        return c.reportResourceFailure(cluster, err)
     }
 
     // 4. Evaluate current status and report immediately
