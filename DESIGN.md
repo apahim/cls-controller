@@ -805,51 +805,7 @@ resourceTemplate: |
     backoffLimit: 3
 ```
 
-#### Option 2: CAPG GCPCluster (trigger CAPG operator)
-```yaml
-resourceTemplate: |
-  apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-  kind: GCPCluster
-  metadata:
-    name: "{{.cluster.name}}"
-    namespace: "{{.cluster.namespace}}"
-  spec:
-    project: "{{.cluster.spec.gcp_project}}"
-    region: "{{.cluster.spec.region}}"
-    network:
-      name: "{{.cluster.spec.vpc_name}}"
-    credentialsRef:
-      name: gcp-credentials
-      namespace: "{{.cluster.namespace}}"
-```
-
-#### Option 3: CAPI Cluster (trigger CAPI operator)
-```yaml
-resourceTemplate: |
-  apiVersion: cluster.x-k8s.io/v1beta1
-  kind: Cluster
-  metadata:
-    name: "{{.cluster.name}}"
-    namespace: "{{.cluster.namespace}}"
-  spec:
-    clusterNetwork:
-      pods:
-        cidrBlocks:
-        - "{{.cluster.spec.pod_cidr}}"
-      services:
-        cidrBlocks:
-        - "{{.cluster.spec.service_cidr}}"
-    infrastructureRef:
-      apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-      kind: GCPCluster
-      name: "{{.cluster.name}}"
-    controlPlaneRef:
-      apiVersion: controlplane.cluster.x-k8s.io/v1beta1
-      kind: KubeadmControlPlane
-      name: "{{.cluster.name}}-control-plane"
-```
-
-#### Option 4: HyperShift HostedCluster (trigger HyperShift operator)
+#### Option 2: HyperShift HostedCluster (trigger HyperShift operator)
 ```yaml
 resourceTemplate: |
   apiVersion: hypershift.openshift.io/v1beta1
@@ -868,6 +824,32 @@ resourceTemplate: |
     dns:
       baseDomain: "{{.cluster.spec.base_domain}}"
 ```
+
+#### Option 3: Config Connector DNS Records (for DNS management)
+```yaml
+resourceTemplate: |
+  apiVersion: dns.cnrm.cloud.google.com/v1beta1
+  kind: DNSRecordSet
+  metadata:
+    name: "{{.cluster.name}}-api-dns"
+    namespace: "{{.cluster.namespace | default "cls-system"}}"
+    labels:
+      cluster-id: "{{.cluster.id}}"
+      cluster-generation: "{{.cluster.generation}}"
+    annotations:
+      cnrm.cloud.google.com/project-id: "{{.cluster.spec.gcp_project}}"
+      cnrm.cloud.google.com/deletion-policy: "abandon"
+  spec:
+    name: "{{.cluster.name}}.{{.cluster.spec.base_domain}}."
+    type: "A"
+    ttl: 300
+    managedZoneRef:
+      name: "{{.cluster.spec.dns_zone_name}}"
+      namespace: "{{.cluster.namespace | default "cls-system"}}"
+    rrdatas:
+    - "{{.cluster.status.control_plane_endpoint}}"
+```
+
 
 ## 4. Simple Controller Architecture
 
@@ -1191,64 +1173,175 @@ spec:
       message: "Cluster creation {{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}completed successfully{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}failed{{else}}is in progress{{end}}"
 ```
 
-### Example 3: GCP Infrastructure with In-Place Updates
+### Example 3: DNS Management with Config Connector
 
 ```yaml
 apiVersion: cls.redhat.com/v1alpha1
 kind: ControllerConfig
 metadata:
-  name: gcp-infrastructure
+  name: cluster-dns-management
   namespace: cls-system
 spec:
-  name: "gcp-infrastructure"
-  description: "Manages GCP infrastructure via CAPG operator"
+  name: "cluster-dns-management"
+  description: "Creates DNS records for clusters using Config Connector"
 
-  # Only process GCP clusters
+  # Only process clusters that need DNS management
   preconditions:
     - field: "spec.provider"
       operator: "eq"
       value: "gcp"
+    - field: "spec.dns_management_enabled"
+      operator: "eq"
+      value: true
+    - field: "spec.dns_zone_name"
+      operator: "exists"
+    - field: "status.control_plane_endpoint"
+      operator: "exists"
 
-  # In-place strategy for mutable Custom Resources
+  # Config Connector resources are mutable - use in-place updates
   resourceManagement:
-    updateStrategy: "in_place"  # Update existing GCPCluster resource
-    # No cleanup config needed - single resource per cluster
+    updateStrategy: "in_place"
+    # No cleanup needed - single DNS record per cluster
 
   resourceTemplate: |
-    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
-    kind: GCPCluster
+    apiVersion: dns.cnrm.cloud.google.com/v1beta1
+    kind: DNSRecordSet
     metadata:
-      name: "{{.cluster.name}}"  # Same name always
-      namespace: "{{.cluster.namespace}}"
+      name: "{{.cluster.name}}-api-dns"
+      namespace: "{{.cluster.namespace | default "cls-system"}}"
       labels:
         cluster-id: "{{.cluster.id}}"
         cluster-generation: "{{.cluster.generation}}"
-        controller: "gcp-infrastructure"
+        controller: "cluster-dns-management"
+        cluster-name: "{{.cluster.name}}"
+      annotations:
+        cnrm.cloud.google.com/project-id: "{{.cluster.spec.gcp_project}}"
+        cnrm.cloud.google.com/deletion-policy: "abandon"  # Keep DNS record if resource is deleted
     spec:
-      project: "{{.cluster.spec.gcp_project}}"
-      region: "{{.cluster.spec.region}}"
-      network:
-        name: "{{.cluster.spec.vpc_name | default .cluster.name}}-network"
-      credentialsRef:
-        name: gcp-credentials
-        namespace: "{{.cluster.namespace}}"
+      # Create API endpoint DNS record
+      name: "{{.cluster.name}}.{{.cluster.spec.base_domain}}."
+      type: "A"
+      ttl: 300
+      managedZoneRef:
+        name: "{{.cluster.spec.dns_zone_name}}"
+        namespace: "{{.cluster.namespace | default "cls-system"}}"
+      rrdatas:
+      - "{{.cluster.status.control_plane_endpoint}}"
 
   statusConditions:
     - name: "Applied"
       status: "True"
-      reason: "GCPClusterCreated"
-      message: "GCPCluster resource has been created/updated"
+      reason: "DNSRecordSetCreated"
+      message: "DNS record set for {{.cluster.name}}.{{.cluster.spec.base_domain}} has been applied"
 
     - name: "Available"
-      status: "{{if .resource.status.ready}}True{{else}}Unknown{{end}}"
-      reason: "{{if .resource.status.ready}}InfrastructureReady{{else}}InfrastructureProvisioning{{end}}"
-      message: "GCP infrastructure {{if .resource.status.ready}}is ready{{else}}is being provisioned{{end}}"
+      status: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{.status}}{{end}}{{end}}{{else}}Unknown{{end}}"
+      reason: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}DNSRecordReady{{else}}DNSRecordNotReady{{end}}{{end}}{{end}}{{else}}DNSRecordPending{{end}}"
+      message: "DNS record {{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}is ready and resolving to {{.cluster.status.control_plane_endpoint}}{{else}}{{.message}}{{end}}{{end}}{{end}}{{else}}is being processed by Cloud DNS{{end}}"
 
     - name: "Healthy"
-      status: "{{if .resource.status.network.ready}}True{{else}}False{{end}}"
-      reason: "{{if .resource.status.network.ready}}NetworkHealthy{{else}}NetworkConfiguring{{end}}"
-      message: "VPC {{.resource.status.network.name}} {{if .resource.status.network.ready}}is healthy{{else}}is being configured{{end}}"
+      status: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}True{{else}}False{{end}}{{else}}Unknown{{end}}"
+      reason: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}DNSRecordSynced{{else}}DNSRecordOutOfSync{{end}}{{else}}DNSRecordSyncPending{{end}}"
+      message: "DNS record {{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}is in sync with desired state{{else}}is being updated to match desired state{{end}}{{else}}sync status is unknown{{end}}"
 ```
+
+#### Expected Cluster Specification
+
+```json
+{
+  "id": "cluster-123",
+  "name": "production-east",
+  "generation": 42,
+  "spec": {
+    "provider": "gcp",
+    "gcp_project": "my-gcp-project",
+    "base_domain": "example.com",
+    "dns_zone_name": "example-com-zone",
+    "dns_management_enabled": true
+  },
+  "status": {
+    "control_plane_endpoint": "34.123.45.67"
+  }
+}
+```
+
+#### DNS Results
+After deployment: `production-east.example.com` → `34.123.45.67`
+
+This example demonstrates:
+- **Config Connector Integration**: Using Google Cloud resources declaratively
+- **In-Place Strategy**: DNS records are mutable and updated efficiently
+- **Conditional Processing**: Only clusters with DNS management enabled
+- **Status Awareness**: Depends on cluster having a control plane endpoint
+- **Policy Control**: DNS records can be preserved even if controller resource is deleted
+
+### Example 4: Wildcard DNS for Applications
+
+```yaml
+apiVersion: cls.redhat.com/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: cluster-apps-dns-management
+  namespace: cls-system
+spec:
+  name: "cluster-apps-dns-management"
+  description: "Creates wildcard DNS records for cluster applications"
+
+  preconditions:
+    - field: "spec.provider"
+      operator: "eq"
+      value: "gcp"
+    - field: "spec.dns_management_enabled"
+      operator: "eq"
+      value: true
+    - field: "spec.create_apps_dns"
+      operator: "eq"
+      value: true
+    - field: "status.ingress_ip"
+      operator: "exists"
+
+  resourceManagement:
+    updateStrategy: "in_place"
+
+  resourceTemplate: |
+    apiVersion: dns.cnrm.cloud.google.com/v1beta1
+    kind: DNSRecordSet
+    metadata:
+      name: "{{.cluster.name}}-apps-wildcard-dns"
+      namespace: "{{.cluster.namespace | default "cls-system"}}"
+      labels:
+        cluster-id: "{{.cluster.id}}"
+        cluster-generation: "{{.cluster.generation}}"
+        controller: "cluster-apps-dns-management"
+        cluster-name: "{{.cluster.name}}"
+        record-type: "wildcard-apps"
+      annotations:
+        cnrm.cloud.google.com/project-id: "{{.cluster.spec.gcp_project}}"
+        cnrm.cloud.google.com/deletion-policy: "abandon"
+    spec:
+      # Create wildcard DNS for applications
+      name: "*.apps.{{.cluster.name}}.{{.cluster.spec.base_domain}}."
+      type: "A"
+      ttl: 300
+      managedZoneRef:
+        name: "{{.cluster.spec.dns_zone_name}}"
+        namespace: "{{.cluster.namespace | default "cls-system"}}"
+      rrdatas:
+      - "{{.cluster.status.ingress_ip}}"
+
+  statusConditions:
+    - name: "Applied"
+      status: "True"
+      reason: "DNSRecordSetCreated"
+      message: "Wildcard DNS record for *.apps.{{.cluster.name}}.{{.cluster.spec.base_domain}} has been applied"
+
+    - name: "Available"
+      status: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{.status}}{{end}}{{end}}{{else}}Unknown{{end}}"
+      reason: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}DNSRecordReady{{else}}DNSRecordNotReady{{end}}{{end}}{{end}}{{else}}DNSRecordPending{{end}}"
+      message: "Wildcard DNS record {{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}is ready for applications{{else}}{{.message}}{{end}}{{end}}{{end}}{{else}}is being configured{{end}}"
+```
+
+This creates: `*.apps.production-east.example.com` → `34.123.45.68` for application ingress.
 
 ## 7. Implementation Plan
 
