@@ -28,6 +28,7 @@ Templates use standard Go template syntax with basic functions:
 - String manipulation: `join`, `split`, `replace`, `trim`, `lower`, `upper`
 - Encoding: `toJson`, `fromJson`, `base64encode`, `base64decode`
 - Default values: `default`
+- Random generation: `randomString <length>` - generates random alphanumeric string (e.g., `{{randomString 4}}` → `abcd`)
 - Cluster access: `{{.cluster.id}}`, `{{.cluster.spec.region}}`, etc.
 
 ## 2. Simple CRD Configuration
@@ -247,22 +248,22 @@ statusConditions:
     reason: "{{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}JobSucceeded{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}JobFailed{{else}}JobRunning{{end}}"
     message: "Job {{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}completed successfully{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}failed{{else}}is running with {{.resource.status.active}} active pods{{end}}"
 
-# Config Connector DNS controller
+# Config Connector DNS sub-zone controller
 statusConditions:
   - name: "Applied"
     status: "True"
-    reason: "DNSRecordSetCreated"
-    message: "DNS record set has been created"
+    reason: "DNSManagedZoneCreated"
+    message: "DNS managed zone has been created"
 
   - name: "Available"
     status: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{.status}}{{end}}{{end}}{{else}}Unknown{{end}}"
-    reason: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}DNSRecordReady{{else}}DNSRecordNotReady{{end}}{{end}}{{end}}{{else}}DNSRecordPending{{end}}"
-    message: "DNS record {{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}is ready{{else}}{{.message}}{{end}}{{end}}{{end}}{{else}}is being processed{{end}}"
+    reason: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}DNSZoneReady{{else}}DNSZoneNotReady{{end}}{{end}}{{end}}{{else}}DNSZonePending{{end}}"
+    message: "DNS sub-zone {{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}is ready for delegation{{else}}{{.message}}{{end}}{{end}}{{end}}{{else}}is being created{{end}}"
 
   - name: "Healthy"
     status: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}True{{else}}False{{end}}{{else}}Unknown{{end}}"
-    reason: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}DNSRecordSynced{{else}}DNSRecordOutOfSync{{end}}{{else}}DNSRecordSyncPending{{end}}"
-    message: "DNS record {{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}is in sync with desired state{{else}}is being updated to match desired state{{end}}{{else}}sync status is unknown{{end}}"
+    reason: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}DNSZoneSynced{{else}}DNSZoneOutOfSync{{end}}{{else}}DNSZoneSyncPending{{end}}"
+    message: "DNS sub-zone {{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}is in sync with desired state{{else}}is being updated to match desired state{{end}}{{else}}sync status is unknown{{end}}"
 
 # HyperShift HostedCluster controller
 statusConditions:
@@ -286,6 +287,7 @@ Templates have access to:
 - `.cluster` - The original cluster spec from cls-backend (includes `.generation`)
 - `.controller` - Controller metadata (name, type, etc.)
 - `.timestamp` - Unix timestamp for unique resource naming (e.g., `1704067200`)
+- `randomString <length>` - Function to generate random alphanumeric strings (e.g., `{{randomString 4}}` → `abcd`)
 
 **Note**: The `.resource` object contains the live state of the Kubernetes resource created by the controller, allowing status conditions to access its current status, metadata, and spec fields.
 
@@ -367,16 +369,16 @@ func (c *Controller) isImmutableResourceKind(kind string) bool {
 apiVersion: cls.redhat.com/v1alpha1
 kind: ControllerConfig
 metadata:
-  name: cluster-dns-management
+  name: cluster-dns-zone
 spec:
   resourceManagement:
     updateStrategy: "in_place"  # Default - no cleanup needed
 
   resourceTemplate: |
     apiVersion: dns.cnrm.cloud.google.com/v1beta1
-    kind: DNSRecordSet
+    kind: DNSManagedZone
     metadata:
-      name: "{{.cluster.name}}-api-dns"  # Same name always
+      name: "{{.cluster.name}}-dns-zone"  # Same name always
 ```
 
 #### Versioned Configuration with Cleanup
@@ -636,10 +638,12 @@ These are the controller's interpretation of what's happening:
 - **Healthy**: Optional condition for more complex health checks
 
 #### 2. Resource Status (Raw)
-The complete, unfiltered status from the actual Kubernetes resource:
+The complete, unfiltered status from the actual Kubernetes resource's `.status` field:
 - **Job**: `.status` with conditions, active/succeeded counts, completion time
-- **Config Connector DNSRecordSet**: `.status` with conditions, observedState, and DNS record details
+- **Config Connector DNSManagedZone**: `.status` with conditions, observedGeneration, and `.observedState` (actual GCP resource state)
 - **HostedCluster**: `.status` with version info, kubeconfig, conditions
+
+**Config Connector Note**: The `.status.observedState` field contains the actual state of the GCP resource as reported by Google Cloud APIs, providing real-time visibility into the cloud resource status.
 
 This gives cls-backend both:
 - **Structured view**: Via controller conditions for consistent interpretation
@@ -666,44 +670,63 @@ This helps cls-backend understand:
 
 ### Status Report Structure
 Every status report to cls-backend automatically includes:
+
+**Example: DNS Sub-Zone Controller Status**
 ```json
 {
   "cluster_id": "cluster-123",
-  "controller_name": "gcp-environment-validation",
+  "controller_name": "hypershift-dns-subzone",
   "observed_generation": 42,  // Always set to .cluster.generation
   "conditions": [
     {
       "name": "Applied",
       "status": "True",
-      "reason": "JobCreated",
-      "message": "GCP validation job has been created"
+      "reason": "DNSManagedZoneCreated",
+      "message": "DNS sub-zone abcd.example.com. for HyperShift cluster production-east has been created"
     },
     {
       "name": "Available",
       "status": "True",
-      "reason": "ValidationPassed",
-      "message": "GCP environment validation passed"
+      "reason": "DNSZoneReady",
+      "message": "DNS sub-zone abcd.example.com. is ready for HyperShift delegation"
+    },
+    {
+      "name": "Healthy",
+      "status": "True",
+      "reason": "DNSZoneSynced",
+      "message": "DNS sub-zone abcd.example.com. is in sync with desired state"
     }
   ],
   "resource_status": {
-    // Raw status from the Kubernetes resource (Job, DNSRecordSet, etc.)
-    "generation": 1,  // Resource's current generation (.metadata.generation)
-    // No observed_generation for Jobs since they're immutable
-    "conditions": [
+    // Raw status from the DNSManagedZone resource (.status field)
+    "generation": 1,  // from .metadata.generation
+    "observed_generation": 1,  // from .status.observedGeneration
+    "conditions": [  // from .status.conditions
       {
-        "type": "Complete",
+        "type": "Ready",
         "status": "True",
-        "lastProbeTime": "2024-01-15T10:30:00Z",
-        "lastTransitionTime": "2024-01-15T10:29:45Z"
+        "lastTransitionTime": "2024-01-15T10:30:00Z",
+        "reason": "UpToDate",
+        "message": "The resource is up to date"
       }
     ],
-    "active": 0,
-    "succeeded": 1,
-    "completionTime": "2024-01-15T10:29:45Z"
+    "observedState": {  // from .status.observedState (Config Connector specific)
+      "dnsName": "abcd.example.com.",  // Actual DNS zone name in GCP
+      "nameServers": [  // Name servers assigned by Google Cloud DNS
+        "ns-cloud-c1.googledomains.com.",
+        "ns-cloud-c2.googledomains.com."
+      ]
+    }
   },
   "timestamp": "2024-01-15T10:30:00Z"
 }
 ```
+
+**Note for Controller Integration**: Another controller (e.g., HyperShift controller) can easily extract the sub-zone FQDN from any condition message using simple regex or string parsing:
+- `conditions[?(@.name=="Available")].message` → `"DNS sub-zone abcd.example.com. is ready for HyperShift delegation"`
+- Extract FQDN: `abcd.example.com.`
+
+This allows the HyperShift controller to configure the HostedCluster with the correct delegated sub-zone.
 
 #### Resource Status Examples
 
@@ -728,12 +751,12 @@ Every status report to cls-backend automatically includes:
 }
 ```
 
-**Config Connector DNSRecordSet Status**:
+**Config Connector DNSManagedZone Status (HyperShift Sub-Zone)**:
 ```json
 "resource_status": {
-  "generation": 1,  // DNSRecordSet created once
-  "observed_generation": 1,  // Config Connector has processed generation 1
-  "conditions": [
+  "generation": 1,  // from .metadata.generation - DNSManagedZone created once
+  "observed_generation": 1,  // from .status.observedGeneration - Config Connector has processed generation 1
+  "conditions": [  // from .status.conditions - Config Connector's assessment
     {
       "type": "Ready",
       "status": "True",
@@ -742,13 +765,16 @@ Every status report to cls-backend automatically includes:
       "message": "The resource is up to date"
     }
   ],
-  "observedState": {
-    "name": "production-east.example.com.",
-    "type": "A",
-    "ttl": 300,
-    "rrdatas": [
-      "34.123.45.67"
-    ]
+  "observedState": {  // from .status.observedState - Actual state from Google Cloud DNS
+    "dnsName": "abcd.example.com.",  // Actual DNS zone name in GCP
+    "description": "Delegated DNS sub-zone for HyperShift cluster production-east",
+    "nameServers": [  // Name servers assigned by Google Cloud DNS
+      "ns-cloud-c1.googledomains.com.",
+      "ns-cloud-c2.googledomains.com.",
+      "ns-cloud-c3.googledomains.com.",
+      "ns-cloud-c4.googledomains.com."
+    ],
+    "visibility": "public"  // DNS zone visibility setting
   }
 }
 ```
@@ -831,13 +857,13 @@ resourceTemplate: |
       baseDomain: "{{.cluster.spec.base_domain}}"
 ```
 
-#### Option 3: Config Connector DNS Records (for DNS management)
+#### Option 3: Config Connector DNS Sub-Zone (for cluster DNS delegation)
 ```yaml
 resourceTemplate: |
   apiVersion: dns.cnrm.cloud.google.com/v1beta1
-  kind: DNSRecordSet
+  kind: DNSManagedZone
   metadata:
-    name: "{{.cluster.name}}-api-dns"
+    name: "{{.cluster.name}}-dns-zone"
     namespace: "{{.cluster.namespace | default "cls-system"}}"
     labels:
       cluster-id: "{{.cluster.id}}"
@@ -846,14 +872,9 @@ resourceTemplate: |
       cnrm.cloud.google.com/project-id: "{{.cluster.spec.gcp_project}}"
       cnrm.cloud.google.com/deletion-policy: "abandon"
   spec:
-    name: "{{.cluster.name}}.{{.cluster.spec.base_domain}}."
-    type: "A"
-    ttl: 300
-    managedZoneRef:
-      name: "{{.cluster.spec.dns_zone_name}}"
-      namespace: "{{.cluster.namespace | default "cls-system"}}"
-    rrdatas:
-    - "{{.cluster.status.control_plane_endpoint}}"
+    dnsName: "{{.cluster.spec.dns_subdomain}}.{{.cluster.spec.base_domain}}."
+    description: "Delegated DNS zone for cluster {{.cluster.name}}"
+    visibility: "public"
 ```
 
 
@@ -1179,76 +1200,72 @@ spec:
       message: "Cluster creation {{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}completed successfully{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}failed{{else}}is in progress{{end}}"
 ```
 
-### Example 3: DNS Management with Config Connector
+### Example 3: HyperShift DNS Sub-Zone Management with Config Connector
 
 ```yaml
 apiVersion: cls.redhat.com/v1alpha1
 kind: ControllerConfig
 metadata:
-  name: cluster-dns-management
+  name: hypershift-dns-subzone
   namespace: cls-system
 spec:
-  name: "cluster-dns-management"
-  description: "Creates DNS records for clusters using Config Connector"
+  name: "hypershift-dns-subzone"
+  description: "Creates DNS sub-zones for HyperShift cluster delegation using Config Connector"
 
-  # Only process clusters that need DNS management
+  # Only process HyperShift clusters that need DNS sub-zones
   preconditions:
     - field: "spec.provider"
       operator: "eq"
       value: "gcp"
+    - field: "spec.infrastructure_type"
+      operator: "eq"
+      value: "hypershift"
     - field: "spec.dns_management_enabled"
       operator: "eq"
       value: true
-    - field: "spec.dns_zone_name"
-      operator: "exists"
-    - field: "status.control_plane_endpoint"
+    - field: "spec.parent_dns_zone"
       operator: "exists"
 
   # Config Connector resources are mutable - use in-place updates
   resourceManagement:
     updateStrategy: "in_place"
-    # No cleanup needed - single DNS record per cluster
+    # No cleanup needed - single DNS sub-zone per cluster
 
   resourceTemplate: |
     apiVersion: dns.cnrm.cloud.google.com/v1beta1
-    kind: DNSRecordSet
+    kind: DNSManagedZone
     metadata:
-      name: "{{.cluster.name}}-api-dns"
+      name: "{{.cluster.name}}-{{randomString 4}}-subzone"
       namespace: "{{.cluster.namespace | default "cls-system"}}"
       labels:
         cluster-id: "{{.cluster.id}}"
         cluster-generation: "{{.cluster.generation}}"
-        controller: "cluster-dns-management"
+        controller: "hypershift-dns-subzone"
         cluster-name: "{{.cluster.name}}"
       annotations:
         cnrm.cloud.google.com/project-id: "{{.cluster.spec.gcp_project}}"
-        cnrm.cloud.google.com/deletion-policy: "abandon"  # Keep DNS record if resource is deleted
+        cnrm.cloud.google.com/deletion-policy: "abandon"  # Keep DNS sub-zone if resource is deleted
     spec:
-      # Create API endpoint DNS record
-      name: "{{.cluster.name}}.{{.cluster.spec.base_domain}}."
-      type: "A"
-      ttl: 300
-      managedZoneRef:
-        name: "{{.cluster.spec.dns_zone_name}}"
-        namespace: "{{.cluster.namespace | default "cls-system"}}"
-      rrdatas:
-      - "{{.cluster.status.control_plane_endpoint}}"
+      # Create delegated DNS sub-zone for HyperShift operator
+      dnsName: "{{randomString 4}}.{{.cluster.spec.base_domain}}."
+      description: "Delegated DNS sub-zone for HyperShift cluster {{.cluster.name}}"
+      visibility: "public"
 
   statusConditions:
     - name: "Applied"
       status: "True"
-      reason: "DNSRecordSetCreated"
-      message: "DNS record set for {{.cluster.name}}.{{.cluster.spec.base_domain}} has been applied"
+      reason: "DNSManagedZoneCreated"
+      message: "DNS sub-zone {{.resource.spec.dnsName}} for HyperShift cluster {{.cluster.name}} has been created"
 
     - name: "Available"
       status: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{.status}}{{end}}{{end}}{{else}}Unknown{{end}}"
-      reason: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}DNSRecordReady{{else}}DNSRecordNotReady{{end}}{{end}}{{end}}{{else}}DNSRecordPending{{end}}"
-      message: "DNS record {{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}is ready and resolving to {{.cluster.status.control_plane_endpoint}}{{else}}{{.message}}{{end}}{{end}}{{end}}{{else}}is being processed by Cloud DNS{{end}}"
+      reason: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}DNSZoneReady{{else}}DNSZoneNotReady{{end}}{{end}}{{end}}{{else}}DNSZonePending{{end}}"
+      message: "DNS sub-zone {{.resource.spec.dnsName}} {{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}is ready for HyperShift delegation{{else}}{{.message}}{{end}}{{end}}{{end}}{{else}}is being created{{end}}"
 
     - name: "Healthy"
       status: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}True{{else}}False{{end}}{{else}}Unknown{{end}}"
-      reason: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}DNSRecordSynced{{else}}DNSRecordOutOfSync{{end}}{{else}}DNSRecordSyncPending{{end}}"
-      message: "DNS record {{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}is in sync with desired state{{else}}is being updated to match desired state{{end}}{{else}}sync status is unknown{{end}}"
+      reason: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}DNSZoneSynced{{else}}DNSZoneOutOfSync{{end}}{{else}}DNSZoneSyncPending{{end}}"
+      message: "DNS sub-zone {{.resource.spec.dnsName}} {{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}is in sync with desired state{{else}}is being updated to match desired state{{end}}{{else}}sync status is unknown{{end}}"
 ```
 
 #### Expected Cluster Specification
@@ -1260,94 +1277,27 @@ spec:
   "generation": 42,
   "spec": {
     "provider": "gcp",
+    "infrastructure_type": "hypershift",
     "gcp_project": "my-gcp-project",
     "base_domain": "example.com",
-    "dns_zone_name": "example-com-zone",
+    "parent_dns_zone": "example-com-zone",
     "dns_management_enabled": true
-  },
-  "status": {
-    "control_plane_endpoint": "34.123.45.67"
   }
 }
 ```
 
-#### DNS Results
-After deployment: `production-east.example.com` → `34.123.45.67`
+#### DNS Sub-Zone Results
+After deployment: `abcd.example.com` delegated sub-zone ready for HyperShift operator to create records like:
+- `api.abcd.example.com` → API server endpoint
+- `*.apps.abcd.example.com` → Application ingress
 
 This example demonstrates:
-- **Config Connector Integration**: Using Google Cloud resources declaratively
-- **In-Place Strategy**: DNS records are mutable and updated efficiently
-- **Conditional Processing**: Only clusters with DNS management enabled
-- **Status Awareness**: Depends on cluster having a control plane endpoint
-- **Policy Control**: DNS records can be preserved even if controller resource is deleted
+- **Config Connector Integration**: Using Google Cloud resources declaratively for DNS delegation
+- **In-Place Strategy**: DNS sub-zones are mutable and updated efficiently
+- **HyperShift Integration**: Creates delegated zones for HyperShift operator control
+- **Random Sub-Zone Naming**: Uses 4-character random strings for unique sub-domains
+- **Policy Control**: DNS sub-zones can be preserved even if controller resource is deleted
 
-### Example 4: Wildcard DNS for Applications
-
-```yaml
-apiVersion: cls.redhat.com/v1alpha1
-kind: ControllerConfig
-metadata:
-  name: cluster-apps-dns-management
-  namespace: cls-system
-spec:
-  name: "cluster-apps-dns-management"
-  description: "Creates wildcard DNS records for cluster applications"
-
-  preconditions:
-    - field: "spec.provider"
-      operator: "eq"
-      value: "gcp"
-    - field: "spec.dns_management_enabled"
-      operator: "eq"
-      value: true
-    - field: "spec.create_apps_dns"
-      operator: "eq"
-      value: true
-    - field: "status.ingress_ip"
-      operator: "exists"
-
-  resourceManagement:
-    updateStrategy: "in_place"
-
-  resourceTemplate: |
-    apiVersion: dns.cnrm.cloud.google.com/v1beta1
-    kind: DNSRecordSet
-    metadata:
-      name: "{{.cluster.name}}-apps-wildcard-dns"
-      namespace: "{{.cluster.namespace | default "cls-system"}}"
-      labels:
-        cluster-id: "{{.cluster.id}}"
-        cluster-generation: "{{.cluster.generation}}"
-        controller: "cluster-apps-dns-management"
-        cluster-name: "{{.cluster.name}}"
-        record-type: "wildcard-apps"
-      annotations:
-        cnrm.cloud.google.com/project-id: "{{.cluster.spec.gcp_project}}"
-        cnrm.cloud.google.com/deletion-policy: "abandon"
-    spec:
-      # Create wildcard DNS for applications
-      name: "*.apps.{{.cluster.name}}.{{.cluster.spec.base_domain}}."
-      type: "A"
-      ttl: 300
-      managedZoneRef:
-        name: "{{.cluster.spec.dns_zone_name}}"
-        namespace: "{{.cluster.namespace | default "cls-system"}}"
-      rrdatas:
-      - "{{.cluster.status.ingress_ip}}"
-
-  statusConditions:
-    - name: "Applied"
-      status: "True"
-      reason: "DNSRecordSetCreated"
-      message: "Wildcard DNS record for *.apps.{{.cluster.name}}.{{.cluster.spec.base_domain}} has been applied"
-
-    - name: "Available"
-      status: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{.status}}{{end}}{{end}}{{else}}Unknown{{end}}"
-      reason: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}DNSRecordReady{{else}}DNSRecordNotReady{{end}}{{end}}{{end}}{{else}}DNSRecordPending{{end}}"
-      message: "Wildcard DNS record {{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}is ready for applications{{else}}{{.message}}{{end}}{{end}}{{end}}{{else}}is being configured{{end}}"
-```
-
-This creates: `*.apps.production-east.example.com` → `34.123.45.68` for application ingress.
 
 ## 7. Implementation Plan
 
