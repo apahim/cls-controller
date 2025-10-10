@@ -25,10 +25,11 @@ Create a generalized, configurable controller that can create Kubernetes resourc
 
 ### Template Security
 Templates use standard Go template syntax with basic functions:
-- String manipulation: `join`, `split`, `replace`, `trim`, `lower`, `upper`
+- String manipulation: `join`, `split`, `replace`, `trim`, `lower`, `upper`, `substr`
 - Encoding: `toJson`, `fromJson`, `base64encode`, `base64decode`
 - Default values: `default`
 - Random generation: `randomString <length>` - generates random alphanumeric string (e.g., `{{randomString 4}}` → `abcd`)
+- Substring extraction: `substr <start> <length> <string>` - extracts substring (e.g., `{{substr 0 8 .cluster.id}}` → first 8 characters)
 - Cluster access: `{{.cluster.id}}`, `{{.cluster.spec.region}}`, etc.
 
 ## 2. Simple CRD Configuration
@@ -53,7 +54,7 @@ spec:
         properties:
           spec:
             type: object
-            required: ["name", "resourceTemplate"]
+            required: ["name", "resources"]
             properties:
               name:
                 type: string
@@ -87,10 +88,56 @@ spec:
                     operator: "in"
                     value: ["us-east1", "us-west1"]
 
-              # The Kubernetes resource to create when an event matches
-              resourceTemplate:
-                type: string
-                description: "Kubernetes resource YAML template (Job for direct work, or CR for operators like CAPG/CAPI)"
+              # List of Kubernetes resources to create when an event matches
+              resources:
+                type: array
+                description: "List of Kubernetes resources to create"
+                items:
+                  type: object
+                  required: ["name", "template"]
+                  properties:
+                    name:
+                      type: string
+                      description: "Unique name for this resource within the controller (e.g., 'rendered-config', 'transport-job')"
+                    description:
+                      type: string
+                      description: "Optional description of what this resource does"
+                    template:
+                      type: string
+                      description: "Kubernetes resource YAML template"
+                    resourceManagement:
+                      type: object
+                      description: "Resource-specific update and cleanup strategies (overrides controller defaults)"
+                      properties:
+                        updateStrategy:
+                          type: string
+                          enum: ["in_place", "versioned"]
+                          description: "How to handle resource updates"
+                        cleanup:
+                          type: object
+                          description: "Cleanup policies (only applies when updateStrategy is 'versioned')"
+                          properties:
+                            retentionPolicy:
+                              type: object
+                              properties:
+                                completedResourcesPerGeneration:
+                                  type: integer
+                                  default: 2
+                                totalCompletedResources:
+                                  type: integer
+                                  default: 5
+                                maxAge:
+                                  type: string
+                                  default: "24h"
+                            cleanupBehavior:
+                              type: object
+                              properties:
+                                deleteFailedResources:
+                                  type: boolean
+                                  default: true
+                                preserveRunningResources:
+                                  type: boolean
+                                  default: true
 
               # Multiple status conditions to report based on resource status
               statusConditions:
@@ -310,12 +357,12 @@ statusConditions:
   - name: "Applied"
     status: "True"
     reason: "JobCreated"
-    message: "Job {{.resource.metadata.name}} has been created"
+    message: "Job {{.resources.validation-job.metadata.name}} has been created"
 
   - name: "Available"
-    status: "{{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}True{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}False{{else}}Unknown{{end}}"
-    reason: "{{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}JobSucceeded{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}JobFailed{{else}}JobRunning{{end}}"
-    message: "Job {{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}completed successfully{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}failed{{else}}is running with {{.resource.status.active}} active pods{{end}}"
+    status: "{{$complete := false}}{{$failed := false}}{{range .resources.validation-job.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}{{if $complete}}True{{else if $failed}}False{{else}}Unknown{{end}}"
+    reason: "{{$complete := false}}{{$failed := false}}{{range .resources.validation-job.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}{{if $complete}}JobSucceeded{{else if $failed}}JobFailed{{else}}JobRunning{{end}}"
+    message: "{{$complete := false}}{{$failed := false}}{{range .resources.validation-job.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}Job {{if $complete}}completed successfully{{else if $failed}}failed{{else}}is running with {{.resources.validation-job.status.active}} active pods{{end}}"
 
 # Config Connector DNS sub-zone controller
 statusConditions:
@@ -325,14 +372,14 @@ statusConditions:
     message: "DNS managed zone has been created"
 
   - name: "Available"
-    status: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{.status}}{{end}}{{end}}{{else}}Unknown{{end}}"
-    reason: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}DNSZoneReady{{else}}DNSZoneNotReady{{end}}{{end}}{{end}}{{else}}DNSZonePending{{end}}"
-    message: "DNS sub-zone {{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}is ready for delegation{{else}}{{.message}}{{end}}{{end}}{{end}}{{else}}is being created{{end}}"
+    status: "{{$ready := \"Unknown\"}}{{if .resources.dns-subzone.status.conditions}}{{range .resources.dns-subzone.status.conditions}}{{if eq .type \"Ready\"}}{{$ready = .status}}{{end}}{{end}}{{end}}{{$ready}}"
+    reason: "{{$reason := \"DNSZonePending\"}}{{if .resources.dns-subzone.status.conditions}}{{range .resources.dns-subzone.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}{{$reason = \"DNSZoneReady\"}}{{else}}{{$reason = \"DNSZoneNotReady\"}}{{end}}{{end}}{{end}}{{end}}{{$reason}}"
+    message: "{{$message := \"DNS sub-zone is being created\"}}{{if .resources.dns-subzone.status.conditions}}{{range .resources.dns-subzone.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}{{$message = \"DNS sub-zone is ready for delegation\"}}{{else}}{{$message = printf \"DNS sub-zone: %s\" .message}}{{end}}{{end}}{{end}}{{end}}{{$message}}"
 
   - name: "Healthy"
-    status: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}True{{else}}False{{end}}{{else}}Unknown{{end}}"
-    reason: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}DNSZoneSynced{{else}}DNSZoneOutOfSync{{end}}{{else}}DNSZoneSyncPending{{end}}"
-    message: "DNS sub-zone {{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}is in sync with desired state{{else}}is being updated to match desired state{{end}}{{else}}sync status is unknown{{end}}"
+    status: "{{if .resources.dns-subzone.status.observedGeneration}}{{if eq .resources.dns-subzone.metadata.generation .resources.dns-subzone.status.observedGeneration}}True{{else}}False{{end}}{{else}}Unknown{{end}}"
+    reason: "{{if .resources.dns-subzone.status.observedGeneration}}{{if eq .resources.dns-subzone.metadata.generation .resources.dns-subzone.status.observedGeneration}}DNSZoneSynced{{else}}DNSZoneOutOfSync{{end}}{{else}}DNSZoneSyncPending{{end}}"
+    message: "DNS sub-zone {{if .resources.dns-subzone.status.observedGeneration}}{{if eq .resources.dns-subzone.metadata.generation .resources.dns-subzone.status.observedGeneration}}is in sync with desired state{{else}}is being updated to match desired state{{end}}{{else}}sync status is unknown{{end}}"
 
 # HyperShift HostedCluster controller
 statusConditions:
@@ -342,7 +389,7 @@ statusConditions:
     message: "HostedCluster resource has been created"
 
   - name: "Available"
-    status: "{{if .resource.status.conditions}}Unknown{{else}}Unknown{{end}}"
+    status: "{{if .resources.hosted-cluster.status.conditions}}Unknown{{else}}Unknown{{end}}"
     reason: "ClusterProvisioning"
     message: "HostedCluster is being provisioned - check resource status for details"
 ```
@@ -352,13 +399,13 @@ All status reports must include the `observedGeneration` from the cluster spec t
 
 ### Available Template Context
 Templates have access to:
-- `.resource` - The created Kubernetes resource with its current status
+- `.resources` - Map of all created Kubernetes resources with their current status (e.g., `.resources.dns-subzone`, `.resources.maestro-transport`)
 - `.cluster` - The original cluster spec from cls-backend (includes `.generation`)
 - `.controller` - Controller metadata (name, type, etc.)
 - `.timestamp` - Unix timestamp for unique resource naming (e.g., `1704067200`)
 - `randomString <length>` - Function to generate random alphanumeric strings (e.g., `{{randomString 4}}` → `abcd`)
 
-**Note**: The `.resource` object contains the live state of the Kubernetes resource created by the controller, allowing status conditions to access its current status, metadata, and spec fields.
+**Note**: The `.resources` map contains the live state of all Kubernetes resources created by the controller, allowing status conditions to access each resource's current status, metadata, and spec fields using the resource name as the key (e.g., `.resources.dns-subzone.status.conditions`).
 
 ### Reconciliation-Based Status Reporting
 
@@ -456,14 +503,18 @@ kind: ControllerConfig
 metadata:
   name: cluster-dns-zone
 spec:
+  # Default resource management (can be overridden per resource)
   resourceManagement:
     updateStrategy: "in_place"  # Default - no cleanup needed
 
-  resourceTemplate: |
-    apiVersion: dns.cnrm.cloud.google.com/v1beta1
-    kind: DNSManagedZone
-    metadata:
-      name: "{{.cluster.name}}-dns-zone"  # Same name always
+  resources:
+    - name: "dns-subzone"
+      description: "DNS sub-zone for cluster delegation"
+      template: |
+        apiVersion: dns.cnrm.cloud.google.com/v1beta1
+        kind: DNSManagedZone
+        metadata:
+          name: "{{.cluster.name}}-dns-zone"  # Same name always
 ```
 
 #### Versioned Configuration with Cleanup
@@ -473,6 +524,7 @@ kind: ControllerConfig
 metadata:
   name: gcp-validation
 spec:
+  # Default resource management
   resourceManagement:
     updateStrategy: "versioned"  # Creates new resource per generation
     cleanup:
@@ -482,11 +534,14 @@ spec:
       cleanupBehavior:
         deleteFailedResources: true
 
-  resourceTemplate: |
-    apiVersion: batch/v1
-    kind: Job
-    metadata:
-      name: "validate-{{.cluster.id}}-gen-{{.cluster.generation}}-{{.timestamp}}"
+  resources:
+    - name: "validation-job"
+      description: "GCP environment validation job"
+      template: |
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: "validate-{{.cluster.id}}-gen-{{.cluster.generation}}-{{.timestamp}}"
 ```
 
 ### Strategy Selection Guidelines
@@ -756,7 +811,7 @@ This helps cls-backend understand:
 ### Status Report Structure
 Every status report to cls-backend automatically includes:
 
-**Example: DNS Sub-Zone Controller Status**
+**Example: Single Resource Controller (DNS Sub-Zone)**
 ```json
 {
   "cluster_id": "cluster-123",
@@ -774,38 +829,95 @@ Every status report to cls-backend automatically includes:
       "status": "True",
       "reason": "DNSZoneReady",
       "message": "DNS sub-zone abcd.example.com. is ready for HyperShift delegation"
-    },
-    {
-      "name": "Healthy",
-      "status": "True",
-      "reason": "DNSZoneSynced",
-      "message": "DNS sub-zone abcd.example.com. is in sync with desired state"
     }
   ],
-  "resource_status": {
-    // Raw status from the DNSManagedZone resource (.status field)
-    "generation": 1,  // from .metadata.generation
-    "observed_generation": 1,  // from .status.observedGeneration
-    "conditions": [  // from .status.conditions
-      {
-        "type": "Ready",
-        "status": "True",
-        "lastTransitionTime": "2024-01-15T10:30:00Z",
-        "reason": "UpToDate",
-        "message": "The resource is up to date"
+  "resources": {
+    "dns-subzone": {
+      "status": "Ready",
+      "resource_status": {
+        // Raw status from the DNSManagedZone resource (.status field)
+        "generation": 1,
+        "observed_generation": 1,
+        "conditions": [
+          {
+            "type": "Ready",
+            "status": "True",
+            "lastTransitionTime": "2024-01-15T10:30:00Z",
+            "reason": "UpToDate",
+            "message": "The resource is up to date"
+          }
+        ],
+        "observedState": {
+          "dnsName": "abcd.example.com.",
+          "nameServers": [
+            "ns-cloud-c1.googledomains.com.",
+            "ns-cloud-c2.googledomains.com."
+          ]
+        }
       }
-    ],
-    "observedState": {  // from .status.observedState (Config Connector specific)
-      "dnsName": "abcd.example.com.",  // Actual DNS zone name in GCP
-      "nameServers": [  // Name servers assigned by Google Cloud DNS
-        "ns-cloud-c1.googledomains.com.",
-        "ns-cloud-c2.googledomains.com."
-      ]
     }
   },
   "timestamp": "2024-01-15T10:30:00Z"
 }
 ```
+
+**Example: Multi-Resource Controller (Maestro with ConfigMap + Job)**
+```json
+{
+  "cluster_id": "cluster-456",
+  "controller_name": "maestro-hostedcluster",
+  "observed_generation": 15,
+  "conditions": [
+    {
+      "name": "Applied",
+      "status": "True",
+      "reason": "ResourcesCreated",
+      "message": "ConfigMap and Maestro transport job created for cluster production-west"
+    },
+    {
+      "name": "Available",
+      "status": "True",
+      "reason": "MaestroSendSucceeded",
+      "message": "Maestro transport completed successfully"
+    }
+  ],
+  "resources": {
+    "rendered-hostedcluster": {
+      "status": "Ready",
+      "resource_status": {
+        // Raw status from ConfigMap (.status field) - no .data content included
+        "generation": 3,  // ConfigMap updated multiple times
+        "resourceVersion": "12847",
+        // ConfigMaps don't have complex status, but we include what's available
+      }
+    },
+    "maestro-transport": {
+      "status": "Completed",
+      "resource_status": {
+        // Raw status from Job (.status field)
+        "generation": 1,  // Job created once per generation
+        "conditions": [
+          {
+            "type": "Complete",
+            "status": "True",
+            "lastTransitionTime": "2024-01-15T11:15:00Z"
+          }
+        ],
+        "active": 0,
+        "succeeded": 1,
+        "completionTime": "2024-01-15T11:14:30Z"
+      }
+    }
+  },
+  "timestamp": "2024-01-15T11:15:00Z"
+}
+```
+
+**Key Points about Resource Status Reporting:**
+- **All resources included**: Both ConfigMap and Job status are reported for complete visibility
+- **Status fields only**: Raw `.status` field from each Kubernetes resource, no resource content (spec, data, etc.)
+- **Operational insight**: Know if ConfigMap creation/update succeeded, Job completed, etc.
+- **Debugging separation**: Rendered YAML available via `kubectl get cm hostedcluster-production-west -o yaml`, status reports stay manageable
 
 **Note for Controller Integration**: Another controller (e.g., HyperShift controller) can easily extract the sub-zone FQDN from any condition message using simple regex or string parsing:
 - `conditions[?(@.name=="Available")].message` → `"DNS sub-zone abcd.example.com. is ready for HyperShift delegation"`
@@ -901,65 +1013,123 @@ This allows the HyperShift controller to configure the HostedCluster with the co
 
 ### Resource Template Examples
 
-#### Option 1: Job (for direct work)
+#### Option 1: Simple Job (for direct work)
 ```yaml
-resourceTemplate: |
-  apiVersion: batch/v1
-  kind: Job
-  metadata:
-    name: "validate-{{.cluster.id}}"
-    namespace: "cls-system"
-  spec:
-    template:
+resources:
+  - name: "validation-job"
+    description: "Validates cluster environment"
+    template: |
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: "validate-{{.cluster.id}}"
+        namespace: "cls-system"
       spec:
-        containers:
-        - name: validator
-          image: "gcr.io/my-project/gcp-validator:latest"
-          env:
-          - name: CLUSTER_ID
-            value: "{{.cluster.id}}"
-        restartPolicy: Never
-    backoffLimit: 3
+        template:
+          spec:
+            containers:
+            - name: validator
+              image: "gcr.io/my-project/gcp-validator:latest"
+              env:
+              - name: CLUSTER_ID
+                value: "{{.cluster.id}}"
+            restartPolicy: Never
+        backoffLimit: 3
 ```
 
 #### Option 2: HyperShift HostedCluster (trigger HyperShift operator)
 ```yaml
-resourceTemplate: |
-  apiVersion: hypershift.openshift.io/v1beta1
-  kind: HostedCluster
-  metadata:
-    name: "{{.cluster.name}}"
-    namespace: "{{.cluster.namespace}}"
-  spec:
-    release:
-      image: "{{.cluster.spec.openshift_version}}"
-    platform:
-      type: GCP
-      gcp:
-        projectID: "{{.cluster.spec.gcp_project}}"
-        region: "{{.cluster.spec.region}}"
-    dns:
-      baseDomain: "{{.cluster.spec.base_domain}}"
+resources:
+  - name: "hosted-cluster"
+    description: "HyperShift HostedCluster resource"
+    template: |
+      apiVersion: hypershift.openshift.io/v1beta1
+      kind: HostedCluster
+      metadata:
+        name: "{{.cluster.name}}"
+        namespace: "{{.cluster.namespace}}"
+      spec:
+        release:
+          image: "{{.cluster.spec.openshift_version}}"
+        platform:
+          type: GCP
+          gcp:
+            projectID: "{{.cluster.spec.gcp_project}}"
+            region: "{{.cluster.spec.region}}"
+        dns:
+          baseDomain: "{{.cluster.spec.base_domain}}"
 ```
 
 #### Option 3: Config Connector DNS Sub-Zone (for cluster DNS delegation)
 ```yaml
-resourceTemplate: |
-  apiVersion: dns.cnrm.cloud.google.com/v1beta1
-  kind: DNSManagedZone
-  metadata:
-    name: "{{.cluster.name}}-dns-zone"
-    namespace: "{{.cluster.namespace | default "cls-system"}}"
-    labels:
-      cluster-id: "{{.cluster.id}}"
-      cluster-generation: "{{.cluster.generation}}"
-    annotations:
-      cnrm.cloud.google.com/project-id: "{{.cluster.spec.gcp_project}}"
-      cnrm.cloud.google.com/deletion-policy: "abandon"
-  spec:
-    dnsName: "{{.cluster.spec.dns_subdomain}}.{{.cluster.spec.base_domain}}."
-    description: "Delegated DNS zone for cluster {{.cluster.name}}"
-    visibility: "public"
+resources:
+  - name: "dns-subzone"
+    description: "Delegated DNS sub-zone for HyperShift"
+    template: |
+      apiVersion: dns.cnrm.cloud.google.com/v1beta1
+      kind: DNSManagedZone
+      metadata:
+        name: "{{.cluster.name}}-dns-zone"
+        namespace: "{{.cluster.namespace | default "cls-system"}}"
+        labels:
+          cluster-id: "{{.cluster.id}}"
+          cluster-generation: "{{.cluster.generation}}"
+        annotations:
+          cnrm.cloud.google.com/project-id: "{{.cluster.spec.gcp_project}}"
+          cnrm.cloud.google.com/deletion-policy: "abandon"
+      spec:
+        dnsName: "{{randomString 4}}.{{.cluster.spec.base_domain}}."
+        description: "Delegated DNS zone for cluster {{.cluster.name}}"
+        visibility: "public"
+
+#### Option 4: Multi-Resource (ConfigMap + Job for Maestro)
+```yaml
+resources:
+  - name: "rendered-hostedcluster"
+    description: "Rendered HostedCluster YAML for debugging"
+    resourceManagement:
+      updateStrategy: "in_place"  # ConfigMaps are mutable
+    template: |
+      apiVersion: v1
+      kind: ConfigMap
+      metadata:
+        name: "hostedcluster-{{.cluster.name}}"
+        namespace: "cls-system"
+      data:
+        hostedcluster.yaml: |
+          apiVersion: hypershift.openshift.io/v1beta1
+          kind: HostedCluster
+          # ... full HostedCluster template here ...
+
+  - name: "maestro-transport"
+    description: "Job to send rendered YAML to Maestro"
+    resourceManagement:
+      updateStrategy: "versioned"  # Jobs are immutable
+      cleanup:
+        retentionPolicy:
+          completedResourcesPerGeneration: 2
+    template: |
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: "maestro-send-{{.cluster.id}}-gen-{{.cluster.generation}}-{{.timestamp}}"
+        namespace: "cls-system"
+      spec:
+        template:
+          spec:
+            containers:
+            - name: maestro-client
+              image: "gcr.io/my-project/maestro-client:latest"
+              command: ["/bin/maestro-client", "create-resource", "--file", "/etc/rendered/hostedcluster.yaml"]
+              volumeMounts:
+              - name: rendered-hostedcluster
+                mountPath: /etc/rendered
+                readOnly: true
+            volumes:
+            - name: rendered-hostedcluster
+              configMap:
+                name: "hostedcluster-{{.cluster.name}}"
+            restartPolicy: Never
 ```
 
 
@@ -987,8 +1157,8 @@ type Controller struct {
     // CRD configuration (loaded once at startup)
     config        *ControllerConfig
 
-    // Template (compiled once at startup)
-    resourceTemplate   *template.Template
+    // Templates (compiled once at startup)
+    resourceTemplates   map[string]*template.Template  // keyed by resource name
 
     // SDK integration
     sdkClient     *controllersdk.Client
@@ -1011,15 +1181,41 @@ func (c *Controller) HandleClusterEvent(event *ClusterEvent) error {
         return c.reportPreconditionFailure(cluster)
     }
 
-    // 3. Get or create resource (fast template render)
-    resource, err := c.getOrCreateResource(cluster)
+    // 3. Get or create all resources (render templates and create/update)
+    resources, err := c.getOrCreateAllResources(cluster)
     if err != nil {
         // Report resource creation failure
         return c.reportResourceFailure(cluster, err)
     }
 
-    // 4. Evaluate current status and report immediately
-    return c.evaluateAndReport(resource, cluster)
+    // 4. Evaluate current status of all resources and report immediately
+    return c.evaluateAndReportMultiResource(resources, cluster)
+}
+
+// Multi-resource management
+func (c *Controller) getOrCreateAllResources(cluster *Cluster) (map[string]*unstructured.Unstructured, error) {
+    resources := make(map[string]*unstructured.Unstructured)
+
+    for _, resourceConfig := range c.config.Resources {
+        resource, err := c.getOrCreateResource(resourceConfig, cluster)
+        if err != nil {
+            return nil, fmt.Errorf("failed to create resource %s: %w", resourceConfig.Name, err)
+        }
+        resources[resourceConfig.Name] = resource
+    }
+
+    return resources, nil
+}
+
+func (c *Controller) getOrCreateResource(resourceConfig ResourceConfig, cluster *Cluster) (*unstructured.Unstructured, error) {
+    // Determine update strategy (per-resource or controller default)
+    strategy := c.determineUpdateStrategy(resourceConfig)
+
+    if strategy == "versioned" {
+        return c.getOrCreateVersionedResource(resourceConfig, cluster)
+    } else {
+        return c.getOrUpdateInPlaceResource(resourceConfig, cluster)
+    }
 }
 ```
 
@@ -1085,40 +1281,43 @@ spec:
         deleteFailedResources: true
         preserveRunningResources: true
 
-  resourceTemplate: |
-    apiVersion: batch/v1
-    kind: Job
-    metadata:
-      name: "gcp-validate-{{.cluster.id}}-gen-{{.cluster.generation}}-{{.timestamp}}"
-      namespace: "cls-system"
-      labels:
-        cluster-id: "{{.cluster.id}}"
-        cluster-generation: "{{.cluster.generation}}"
-        controller: "gcp-environment-validation"
-    spec:
-      template:
+  resources:
+    - name: "validation-job"
+      description: "GCP environment validation job"
+      template: |
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: "gcp-validate-{{.cluster.id}}-gen-{{.cluster.generation}}-{{.timestamp}}"
+          namespace: "cls-system"
+          labels:
+            cluster-id: "{{.cluster.id}}"
+            cluster-generation: "{{.cluster.generation}}"
+            controller: "gcp-environment-validation"
         spec:
-          containers:
-          - name: validator
-            image: "gcr.io/my-project/gcp-validator:latest"
-            env:
-            - name: CLUSTER_ID
-              value: "{{.cluster.id}}"
-            - name: GCP_PROJECT
-              value: "{{.cluster.spec.gcp_project}}"
-            - name: GCP_REGION
-              value: "{{.cluster.spec.region}}"
-            volumeMounts:
-            - name: gcp-key
-              mountPath: /etc/gcp
-              readOnly: true
-          volumes:
-          - name: gcp-key
-            secret:
-              secretName: gcp-service-account-key
-          restartPolicy: Never
-      backoffLimit: 2
-      activeDeadlineSeconds: 300
+          template:
+            spec:
+              containers:
+              - name: validator
+                image: "gcr.io/my-project/gcp-validator:latest"
+                env:
+                - name: CLUSTER_ID
+                  value: "{{.cluster.id}}"
+                - name: GCP_PROJECT
+                  value: "{{.cluster.spec.gcp_project}}"
+                - name: GCP_REGION
+                  value: "{{.cluster.spec.region}}"
+                volumeMounts:
+                - name: gcp-key
+                  mountPath: /etc/gcp
+                  readOnly: true
+              volumes:
+              - name: gcp-key
+                secret:
+                  secretName: gcp-service-account-key
+              restartPolicy: Never
+          backoffLimit: 2
+          activeDeadlineSeconds: 300
 
   statusConditions:
     - name: "Applied"
@@ -1127,80 +1326,16 @@ spec:
       message: "GCP validation job has been created and is running"
 
     - name: "Available"
-      status: "{{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}True{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}False{{else}}Unknown{{end}}"
-      reason: "{{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}ValidationPassed{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}ValidationFailed{{else}}ValidationInProgress{{end}}"
-      message: "GCP environment validation {{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}passed{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}failed{{else}}is running{{end}}"
+      status: "{{$complete := false}}{{$failed := false}}{{range .resources.validation-job.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}{{if $complete}}True{{else if $failed}}False{{else}}Unknown{{end}}"
+      reason: "{{$complete := false}}{{$failed := false}}{{range .resources.validation-job.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}{{if $complete}}ValidationPassed{{else if $failed}}ValidationFailed{{else}}ValidationInProgress{{end}}"
+      message: "{{$complete := false}}{{$failed := false}}{{range .resources.validation-job.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}GCP environment validation {{if $complete}}passed{{else if $failed}}failed{{else}}is running{{end}}"
 ```
 
 ### Example 2: Maestro gRPC HyperShift Cluster Creation
 
-First, deploy the HostedCluster template as a ConfigMap:
+This controller uses a two-resource approach with controller-side rendering:
 
 ```yaml
----
-apiVersion: v1
-kind: ConfigMap
-metadata:
-  name: hostedcluster-template
-  namespace: cls-system
-data:
-  hostedcluster.yaml: |
-    apiVersion: hypershift.openshift.io/v1beta1
-    kind: HostedCluster
-    metadata:
-      name: "{{.cluster.name}}"
-      namespace: "{{.cluster.namespace}}"
-      labels:
-        cluster.x-k8s.io/cluster-name: "{{.cluster.name}}"
-        hypershift.openshift.io/hosted-cluster: "{{.cluster.name}}"
-      annotations:
-        cluster.open-cluster-management.io/managedcluster-name: "{{.cluster.name}}"
-    spec:
-      release:
-        image: "{{.cluster.spec.openshift_version}}"
-      pullSecret:
-        name: pull-secret
-      sshKey:
-        name: ssh-key
-      networking:
-        clusterNetwork:
-        - cidr: "{{.cluster.spec.cluster_cidr | default \"10.132.0.0/14\"}}"
-        serviceNetwork:
-        - cidr: "{{.cluster.spec.service_cidr | default \"172.31.0.0/16\"}}"
-        networkType: "{{.cluster.spec.network_type | default \"OVNKubernetes\"}}"
-      platform:
-        type: GCP
-        gcp:
-          projectID: "{{.cluster.spec.gcp_project}}"
-          region: "{{.cluster.spec.region}}"
-          resourceTags:
-          - key: "cluster-id"
-            value: "{{.cluster.id}}"
-          - key: "managed-by"
-            value: "cls-backend"
-      infraID: "{{.cluster.name}}-{{substr 0 8 .cluster.id}}"
-      dns:
-        baseDomain: "{{.cluster.spec.base_domain}}"
-        privateZoneID: "{{.cluster.spec.private_zone_id}}"
-        publicZoneID: "{{.cluster.spec.public_zone_id}}"
-      services:
-      - service: APIServer
-        servicePublishingStrategy:
-          type: LoadBalancer
-      - service: OAuthServer
-        servicePublishingStrategy:
-          type: Route
-      - service: OIDC
-        servicePublishingStrategy:
-          type: Route
-      - service: Konnectivity
-        servicePublishingStrategy:
-          type: Route
-      - service: Ignition
-        servicePublishingStrategy:
-          type: Route
-      autoscaling: {}
-
 apiVersion: cls.redhat.com/v1alpha1
 kind: ControllerConfig
 metadata:
@@ -1209,8 +1344,8 @@ metadata:
 spec:
   name: "maestro-hostedcluster"
   description: "Creates HyperShift HostedClusters via Maestro gRPC"
-
   # Only process HyperShift clusters with Maestro enabled
+
   preconditions:
     - field: "spec.infrastructure_type"
       operator: "eq"
@@ -1219,72 +1354,145 @@ spec:
       operator: "eq"
       value: true
 
-  # Conservative cleanup for long-running cluster creation
-  resourceManagement:
-    updateStrategy: "versioned"  # Required for Jobs (immutable resources)
-    cleanup:
-      retentionPolicy:
-        completedResourcesPerGeneration: 3
-        totalCompletedResources: 10
-        maxAge: "72h"
-      cleanupBehavior:
-        deleteFailedResources: false  # Keep failed resources for debugging
-        preserveRunningResources: true
-
-  resourceTemplate: |
-    apiVersion: batch/v1
-    kind: Job
-    metadata:
-      name: "maestro-create-{{.cluster.id}}-gen-{{.cluster.generation}}-{{.timestamp}}"
-      namespace: "cls-system"
-      labels:
-        cluster-id: "{{.cluster.id}}"
-        cluster-generation: "{{.cluster.generation}}"
-        controller: "maestro-hostedcluster"
-    spec:
-      template:
+  resources:
+    - name: "rendered-hostedcluster"
+      description: "Rendered HostedCluster YAML for debugging and Maestro transport"
+      resourceManagement:
+        updateStrategy: "in_place"  # ConfigMaps are mutable
+      template: |
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: "hostedcluster-{{.cluster.name}}"
+          namespace: "cls-system"
+          labels:
+            cluster-id: "{{.cluster.id}}"
+            cluster-generation: "{{.cluster.generation}}"
+            controller: "maestro-hostedcluster"
+            resource-type: "rendered-hostedcluster"
+        data:
+          hostedcluster.yaml: |
+            apiVersion: hypershift.openshift.io/v1beta1
+            kind: HostedCluster
+            metadata:
+              name: "{{.cluster.name}}"
+              namespace: "{{.cluster.spec.hosting_cluster_namespace | default "clusters"}}"
+              labels:
+                cluster.x-k8s.io/cluster-name: "{{.cluster.name}}"
+                hypershift.openshift.io/hosted-cluster: "{{.cluster.name}}"
+              annotations:
+                cluster.open-cluster-management.io/managedcluster-name: "{{.cluster.name}}"
+            spec:
+              release:
+                image: "{{.cluster.spec.openshift_version}}"
+              pullSecret:
+                name: pull-secret
+              sshKey:
+                name: ssh-key
+              networking:
+                clusterNetwork:
+                - cidr: "{{.cluster.spec.cluster_cidr | default "10.132.0.0/14"}}"
+                serviceNetwork:
+                - cidr: "{{.cluster.spec.service_cidr | default "172.31.0.0/16"}}"
+                networkType: "{{.cluster.spec.network_type | default "OVNKubernetes"}}"
+              platform:
+                type: GCP
+                gcp:
+                  projectID: "{{.cluster.spec.gcp_project}}"
+                  region: "{{.cluster.spec.region}}"
+                  resourceTags:
+                  - key: "cluster-id"
+                    value: "{{.cluster.id}}"
+                  - key: "managed-by"
+                    value: "cls-backend"
+              infraID: "{{.cluster.name}}-{{substr 0 8 .cluster.id}}"
+              dns:
+                baseDomain: "{{.cluster.spec.base_domain}}"
+                privateZoneID: "{{.cluster.spec.private_zone_id}}"
+                publicZoneID: "{{.cluster.spec.public_zone_id}}"
+              services:
+              - service: APIServer
+                servicePublishingStrategy:
+                  type: LoadBalancer
+              - service: OAuthServer
+                servicePublishingStrategy:
+                  type: Route
+              - service: OIDC
+                servicePublishingStrategy:
+                  type: Route
+              - service: Konnectivity
+                servicePublishingStrategy:
+                  type: Route
+              - service: Ignition
+                servicePublishingStrategy:
+                  type: Route
+              autoscaling: {}
+    - name: "maestro-transport"
+      description: "Job to send rendered HostedCluster to Maestro"
+      resourceManagement:
+        updateStrategy: "versioned"  # Jobs are immutable
+        cleanup:
+          retentionPolicy:
+            completedResourcesPerGeneration: 3
+            totalCompletedResources: 10
+            maxAge: "72h"
+          cleanupBehavior:
+            deleteFailedResources: false  # Keep failed resources for debugging
+            preserveRunningResources: true
+      template: |
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: "maestro-send-{{.cluster.id}}-gen-{{.cluster.generation}}-{{.timestamp}}"
+          namespace: "cls-system"
+          labels:
+            cluster-id: "{{.cluster.id}}"
+            cluster-generation: "{{.cluster.generation}}"
+            controller: "maestro-hostedcluster"
+            resource-type: "maestro-transport"
         spec:
-          containers:
-          - name: maestro-client
-            image: "gcr.io/my-project/maestro-client:latest"
-            env:
-            - name: CLUSTER_ID
-              value: "{{.cluster.id}}"
-            - name: CLUSTER_NAME
-              value: "{{.cluster.name}}"
-            - name: HOSTING_CLUSTER_ID
-              value: "{{.cluster.spec.hosting_cluster_id}}"
-            - name: MAESTRO_GRPC_URL
-              value: "maestro-grpc.maestro-system.svc.cluster.local:8090"
-            command: ["/bin/maestro-client", "create-hostedcluster", "--template", "/etc/templates/hostedcluster.yaml"]
-            volumeMounts:
-            - name: maestro-certs
-              mountPath: /etc/maestro/certs
-              readOnly: true
-            - name: hostedcluster-template
-              mountPath: /etc/templates
-              readOnly: true
-          volumes:
-          - name: maestro-certs
-            secret:
-              secretName: maestro-client-certs
-          - name: hostedcluster-template
-            configMap:
-              name: hostedcluster-template
-          restartPolicy: Never
-      backoffLimit: 3
-      activeDeadlineSeconds: 1800
+          template:
+            spec:
+              containers:
+              - name: maestro-client
+                image: "gcr.io/my-project/maestro-client:latest"
+                env:
+                - name: CLUSTER_ID
+                  value: "{{.cluster.id}}"
+                - name: CLUSTER_NAME
+                  value: "{{.cluster.name}}"
+                - name: HOSTING_CLUSTER_ID
+                  value: "{{.cluster.spec.hosting_cluster_id}}"
+                - name: MAESTRO_GRPC_URL
+                  value: "maestro-grpc.maestro-system.svc.cluster.local:8090"
+                command: ["/bin/maestro-client", "create-resource", "--file", "/etc/rendered/hostedcluster.yaml"]
+                volumeMounts:
+                - name: maestro-certs
+                  mountPath: /etc/maestro/certs
+                  readOnly: true
+                - name: rendered-hostedcluster
+                  mountPath: /etc/rendered
+                  readOnly: true
+              volumes:
+              - name: maestro-certs
+                secret:
+                  secretName: maestro-client-certs
+              - name: rendered-hostedcluster
+                configMap:
+                  name: "hostedcluster-{{.cluster.name}}"
+              restartPolicy: Never
+          backoffLimit: 3
+          activeDeadlineSeconds: 1800
 
   statusConditions:
     - name: "Applied"
-      status: "True"
-      reason: "JobCreated"
-      message: "Maestro cluster creation job has been created and is running"
-
+      status: "{{if and .resources.rendered-hostedcluster .resources.maestro-transport}}True{{else}}False{{end}}"
+      reason: "ResourcesCreated"
+      message: "ConfigMap and Maestro transport job created for cluster {{.cluster.name}}"
     - name: "Available"
-      status: "{{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}True{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}False{{else}}Unknown{{end}}"
-      reason: "{{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}CreationSucceeded{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}CreationFailed{{else}}CreationInProgress{{end}}"
-      message: "Cluster creation {{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}completed successfully{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}failed{{else}}is in progress{{end}}"
+      status: "{{$complete := false}}{{$failed := false}}{{range .resources.maestro-transport.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}{{if $complete}}True{{else if $failed}}False{{else}}Unknown{{end}}"
+      reason: "{{$complete := false}}{{$failed := false}}{{range .resources.maestro-transport.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}{{if $complete}}MaestroSendSucceeded{{else if $failed}}MaestroSendFailed{{else}}MaestroSendInProgress{{end}}"
+      message: "{{$complete := false}}{{$failed := false}}{{range .resources.maestro-transport.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}Maestro transport {{if $complete}}completed successfully{{else if $failed}}failed{{else}}is in progress{{end}}"
 ```
 
 ### Example 3: HyperShift DNS Sub-Zone Management with Config Connector
@@ -1318,41 +1526,44 @@ spec:
     updateStrategy: "in_place"
     # No cleanup needed - single DNS sub-zone per cluster
 
-  resourceTemplate: |
-    apiVersion: dns.cnrm.cloud.google.com/v1beta1
-    kind: DNSManagedZone
-    metadata:
-      name: "{{.cluster.name}}-{{randomString 4}}-subzone"
-      namespace: "{{.cluster.namespace | default "cls-system"}}"
-      labels:
-        cluster-id: "{{.cluster.id}}"
-        cluster-generation: "{{.cluster.generation}}"
-        controller: "hypershift-dns-subzone"
-        cluster-name: "{{.cluster.name}}"
-      annotations:
-        cnrm.cloud.google.com/project-id: "{{.cluster.spec.gcp_project}}"
-        cnrm.cloud.google.com/deletion-policy: "abandon"  # Keep DNS sub-zone if resource is deleted
-    spec:
-      # Create delegated DNS sub-zone for HyperShift operator
-      dnsName: "{{randomString 4}}.{{.cluster.spec.base_domain}}."
-      description: "Delegated DNS sub-zone for HyperShift cluster {{.cluster.name}}"
-      visibility: "public"
+  resources:
+    - name: "dns-subzone"
+      description: "Delegated DNS sub-zone for HyperShift cluster"
+      template: |
+        apiVersion: dns.cnrm.cloud.google.com/v1beta1
+        kind: DNSManagedZone
+        metadata:
+          name: "{{.cluster.name}}-{{randomString 4}}-subzone"
+          namespace: "{{.cluster.namespace | default "cls-system"}}"
+          labels:
+            cluster-id: "{{.cluster.id}}"
+            cluster-generation: "{{.cluster.generation}}"
+            controller: "hypershift-dns-subzone"
+            cluster-name: "{{.cluster.name}}"
+          annotations:
+            cnrm.cloud.google.com/project-id: "{{.cluster.spec.gcp_project}}"
+            cnrm.cloud.google.com/deletion-policy: "abandon"  # Keep DNS sub-zone if resource is deleted
+        spec:
+          # Create delegated DNS sub-zone for HyperShift operator
+          dnsName: "{{randomString 4}}.{{.cluster.spec.base_domain}}."
+          description: "Delegated DNS sub-zone for HyperShift cluster {{.cluster.name}}"
+          visibility: "public"
 
   statusConditions:
     - name: "Applied"
       status: "True"
       reason: "DNSManagedZoneCreated"
-      message: "DNS sub-zone {{.resource.spec.dnsName}} for HyperShift cluster {{.cluster.name}} has been created"
+      message: "DNS sub-zone {{.resources.dns-subzone.spec.dnsName}} for HyperShift cluster {{.cluster.name}} has been created"
 
     - name: "Available"
-      status: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{.status}}{{end}}{{end}}{{else}}Unknown{{end}}"
-      reason: "{{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}DNSZoneReady{{else}}DNSZoneNotReady{{end}}{{end}}{{end}}{{else}}DNSZonePending{{end}}"
-      message: "DNS sub-zone {{.resource.spec.dnsName}} {{if .resource.status.conditions}}{{range .resource.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}is ready for HyperShift delegation{{else}}{{.message}}{{end}}{{end}}{{end}}{{else}}is being created{{end}}"
+      status: "{{if .resources.dns-subzone.status.conditions}}{{range .resources.dns-subzone.status.conditions}}{{if eq .type \"Ready\"}}{{.status}}{{end}}{{end}}{{else}}Unknown{{end}}"
+      reason: "{{if .resources.dns-subzone.status.conditions}}{{range .resources.dns-subzone.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}DNSZoneReady{{else}}DNSZoneNotReady{{end}}{{end}}{{end}}{{else}}DNSZonePending{{end}}"
+      message: "DNS sub-zone {{.resources.dns-subzone.spec.dnsName}} {{if .resources.dns-subzone.status.conditions}}{{range .resources.dns-subzone.status.conditions}}{{if eq .type \"Ready\"}}{{if eq .status \"True\"}}is ready for HyperShift delegation{{else}}{{.message}}{{end}}{{end}}{{end}}{{else}}is being created{{end}}"
 
     - name: "Healthy"
-      status: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}True{{else}}False{{end}}{{else}}Unknown{{end}}"
-      reason: "{{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}DNSZoneSynced{{else}}DNSZoneOutOfSync{{end}}{{else}}DNSZoneSyncPending{{end}}"
-      message: "DNS sub-zone {{.resource.spec.dnsName}} {{if .resource.status.observedGeneration}}{{if eq .resource.metadata.generation .resource.status.observedGeneration}}is in sync with desired state{{else}}is being updated to match desired state{{end}}{{else}}sync status is unknown{{end}}"
+      status: "{{if .resources.dns-subzone.status.observedGeneration}}{{if eq .resources.dns-subzone.metadata.generation .resources.dns-subzone.status.observedGeneration}}True{{else}}False{{end}}{{else}}Unknown{{end}}"
+      reason: "{{if .resources.dns-subzone.status.observedGeneration}}{{if eq .resources.dns-subzone.metadata.generation .resources.dns-subzone.status.observedGeneration}}DNSZoneSynced{{else}}DNSZoneOutOfSync{{end}}{{else}}DNSZoneSyncPending{{end}}"
+      message: "DNS sub-zone {{.resources.dns-subzone.spec.dnsName}} {{if .resources.dns-subzone.status.observedGeneration}}{{if eq .resources.dns-subzone.metadata.generation .resources.dns-subzone.status.observedGeneration}}is in sync with desired state{{else}}is being updated to match desired state{{end}}{{else}}sync status is unknown{{end}}"
 ```
 
 #### Expected Cluster Specification
