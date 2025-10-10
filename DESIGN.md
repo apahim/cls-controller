@@ -112,6 +112,58 @@ spec:
                       type: string
                       description: "Template expression for condition message"
 
+              # Resource management configuration
+              resourceManagement:
+                type: object
+                description: "Resource update and cleanup strategies"
+                properties:
+                  updateStrategy:
+                    type: string
+                    enum: ["in_place", "versioned"]
+                    default: "in_place"
+                    description: "How to handle resource updates: 'in_place' updates existing resource, 'versioned' creates new resource per generation"
+                  cleanup:
+                    type: object
+                    description: "Cleanup policies (only applies when updateStrategy is 'versioned')"
+                    properties:
+                      retentionPolicy:
+                        type: object
+                        description: "Resource retention settings"
+                        properties:
+                          completedResourcesPerGeneration:
+                            type: integer
+                            default: 2
+                            description: "Keep last N completed resources per generation"
+                          totalCompletedResources:
+                            type: integer
+                            default: 5
+                            description: "Keep last N completed resources across all generations"
+                          maxAge:
+                            type: string
+                            default: "24h"
+                            description: "Keep resources newer than this duration (e.g., '24h', '7d')"
+                      cleanupTrigger:
+                        type: string
+                        enum: ["before_create", "after_create", "periodic"]
+                        default: "before_create"
+                        description: "When to trigger cleanup"
+                      cleanupBehavior:
+                        type: object
+                        description: "Cleanup behavior settings"
+                        properties:
+                          deleteFailedResources:
+                            type: boolean
+                            default: true
+                            description: "Delete failed resources immediately"
+                          preserveRunningResources:
+                            type: boolean
+                            default: true
+                            description: "Keep running resources (safety)"
+                          deletionGracePeriod:
+                            type: string
+                            default: "30s"
+                            description: "Grace period before forced deletion"
+
           status:
             type: object
             properties:
@@ -233,6 +285,7 @@ Templates have access to:
 - `.resource` - The created Kubernetes resource with its current status
 - `.cluster` - The original cluster spec from cls-backend (includes `.generation`)
 - `.controller` - Controller metadata (name, type, etc.)
+- `.timestamp` - Unix timestamp for unique resource naming (e.g., `1704067200`)
 
 **Note**: The `.resource` object contains the live state of the Kubernetes resource created by the controller, allowing status conditions to access its current status, metadata, and spec fields.
 
@@ -254,6 +307,323 @@ Event 3 (reconcile): Job completed → Report "Applied: True, Available: True"
 ```
 
 The cls-backend scheduler determines how often to send reconcile events based on the resource type and expected completion time.
+
+## 3a. Resource Update Strategies
+
+The controller supports two distinct update strategies to handle different types of Kubernetes resources and operational requirements:
+
+### Strategy Overview
+
+| Strategy | Use Case | Resource Types | Naming | Cleanup |
+|----------|----------|----------------|---------|---------|
+| **in_place** | Default for mutable resources | Deployments, ConfigMaps, CRs | Static name | None needed |
+| **versioned** | Immutable resources or audit trail | Jobs, Pods, or any resource | Generation + timestamp | Configurable retention |
+
+### When Each Strategy is Used
+
+#### Automatic Strategy Selection
+The controller automatically determines the appropriate strategy based on resource type:
+
+```go
+func (c *Controller) determineUpdateStrategy(resourceKind string) string {
+    // Force versioned strategy for immutable resources
+    if c.isImmutableResourceKind(resourceKind) {
+        return "versioned"
+    }
+
+    // Use configured strategy for mutable resources
+    return c.config.ResourceManagement.UpdateStrategy
+}
+
+func (c *Controller) isImmutableResourceKind(kind string) bool {
+    immutableKinds := []string{"Job", "Pod"}
+    for _, immutable := range immutableKinds {
+        if kind == immutable {
+            return true
+        }
+    }
+    return false
+}
+```
+
+#### Strategy Decision Matrix
+
+**`updateStrategy: "in_place"`** (Default):
+- ✅ **Best for**: CAPG/CAPI Custom Resources, Deployments, ConfigMaps, Secrets
+- ✅ **Benefits**: Efficient, maintains resource history, works with operators
+- ✅ **Operation**: Updates existing resource spec when cluster generation changes
+- ❌ **Not suitable**: Jobs, Pods (immutable resources)
+
+**`updateStrategy: "versioned"`**:
+- ✅ **Best for**: Jobs, validation tasks, audit requirements
+- ✅ **Benefits**: Complete audit trail, continuous enforcement, rollback capability
+- ✅ **Operation**: Creates new resource for each generation with timestamp suffix
+- ❌ **Overhead**: Requires cleanup configuration and resource management
+
+### Configuration Examples
+
+#### Simple In-Place Configuration
+```yaml
+apiVersion: cls.redhat.com/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: gcp-infrastructure
+spec:
+  resourceManagement:
+    updateStrategy: "in_place"  # Default - no cleanup needed
+
+  resourceTemplate: |
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: GCPCluster
+    metadata:
+      name: "{{.cluster.name}}"  # Same name always
+```
+
+#### Versioned Configuration with Cleanup
+```yaml
+apiVersion: cls.redhat.com/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: gcp-validation
+spec:
+  resourceManagement:
+    updateStrategy: "versioned"  # Creates new resource per generation
+    cleanup:
+      retentionPolicy:
+        completedResourcesPerGeneration: 2
+        maxAge: "24h"
+      cleanupBehavior:
+        deleteFailedResources: true
+
+  resourceTemplate: |
+    apiVersion: batch/v1
+    kind: Job
+    metadata:
+      name: "validate-{{.cluster.id}}-gen-{{.cluster.generation}}-{{.timestamp}}"
+```
+
+### Strategy Selection Guidelines
+
+1. **Use `in_place` when**:
+   - Working with mutable Kubernetes resources (most CRs, Deployments, etc.)
+   - Integrating with existing operators (CAPG, CAPI, HyperShift)
+   - Want simple configuration with minimal operational overhead
+   - Resource state should be preserved across cluster updates
+
+2. **Use `versioned` when**:
+   - Working with immutable resources (Jobs, Pods)
+   - Need complete audit trail of all operations
+   - Want continuous enforcement/validation
+   - Working with stateless operations that benefit from recreation
+
+3. **Required for**:
+   - Jobs and Pods (automatically enforced - cannot use `in_place`)
+
+### Resource Lifecycle Management
+
+#### Update Strategies
+The controller supports two resource update strategies to handle different use cases:
+
+**`updateStrategy: "in_place"` (Default)**:
+- **Mutable Resources**: Deployments, ConfigMaps, Secrets, Custom Resources
+- **Behavior**: Update existing resource directly when cluster generation changes
+- **Benefits**: Efficient, maintains resource history, simpler logic
+- **Naming**: Same resource name always (e.g., `gcp-cluster-{cluster.name}`)
+
+**`updateStrategy: "versioned"`**:
+- **All Resources**: Creates new resource per generation with timestamp suffix
+- **Required for**: Immutable resources like Jobs (automatically enforced)
+- **Benefits**: Audit trail, continuous enforcement, rollback capability
+- **Naming**: `resource-{cluster-id}-gen-{generation}-{timestamp}`
+
+#### Resource Strategy Selection
+```go
+func (c *Controller) determineUpdateStrategy(resourceKind string) string {
+    // Force versioned strategy for immutable resources
+    if c.isImmutableResourceKind(resourceKind) {
+        return "versioned"
+    }
+
+    // Use configured strategy for mutable resources
+    return c.config.ResourceManagement.UpdateStrategy
+}
+```
+
+**Key Principles for Versioned Strategy**:
+1. **One active resource per cluster** at any time
+2. **Generation-aware cleanup** - delete resources from old generations immediately
+3. **Continuous enforcement** - recreate completed resources within same generation
+4. **Incremental naming** - `resource-{cluster-id}-gen-{generation}-{timestamp}`
+
+#### Resource Management Logic
+
+**In-Place Strategy**:
+```go
+func (c *Controller) getOrUpdateResource(cluster *Cluster) (*unstructured.Unstructured, error) {
+    resourceName := c.generateResourceName(cluster)
+
+    existing := &unstructured.Unstructured{}
+    err := c.k8sClient.Get(ctx, resourceName, existing)
+
+    if err == nil {
+        // Resource exists - update it with new cluster spec
+        newResource, err := c.renderTemplate(cluster)
+        if err != nil {
+            return nil, err
+        }
+
+        existing.Object["spec"] = newResource.Object["spec"]
+        existing.SetLabels(newResource.GetLabels())
+
+        return existing, c.k8sClient.Update(ctx, existing)
+    }
+
+    // Create new resource
+    return c.createResource(cluster)
+}
+```
+
+**Versioned Strategy**:
+```go
+func (c *Controller) getOrCreateVersionedResource(cluster *Cluster) (*unstructured.Unstructured, error) {
+    // 1. Cleanup old generation resources first
+    if err := c.cleanupOldGenerations(cluster.ID, cluster.Generation); err != nil {
+        return nil, err
+    }
+
+    // 2. Check for existing resource in current generation
+    currentGenResource, err := c.findResourceForGeneration(cluster.ID, cluster.Generation)
+    if err != nil {
+        return nil, err
+    }
+
+    if currentGenResource != nil {
+        if c.isResourceRunning(currentGenResource) {
+            // Resource is running - report its status
+            return currentGenResource, nil
+        } else {
+            // Resource completed/failed - delete and recreate for enforcement
+            if err := c.k8sClient.Delete(ctx, currentGenResource); err != nil {
+                return nil, fmt.Errorf("failed to delete completed resource: %w", err)
+            }
+        }
+    }
+
+    // 3. Create new resource with incremental naming
+    return c.createVersionedResource(cluster)
+}
+```
+
+#### Versioned Resource Naming Strategy
+Versioned resources use incremental naming to avoid conflicts while maintaining clear generation tracking:
+
+```
+validate-cluster-123-gen-42-1704067200  # First resource for generation 42
+validate-cluster-123-gen-42-1704067800  # Second resource after first completed
+validate-cluster-123-gen-43-1704068400  # First resource for generation 43
+```
+
+This provides:
+- **Clear generation tracking** via the name
+- **Audit trail** of when resources were created
+- **No naming conflicts** from rapid recreation
+- **Simple cleanup logic** based on generation labels
+
+#### Event Flow Examples
+
+**In-Place Strategy** (e.g., GCPCluster):
+```
+Gen 1 (created)   → Create gcp-cluster-abc → Report status
+Gen 1 (reconcile) → Update gcp-cluster-abc → Report status
+Gen 2 (updated)   → Update gcp-cluster-abc spec → Report status
+Gen 2 (reconcile) → Check gcp-cluster-abc status → Report status
+```
+
+**Versioned Strategy** (e.g., Jobs):
+```
+Gen 1 (created)   → Create resource-gen-1-001 → Report status
+Gen 1 (reconcile) → resource-gen-1-001 running → Report status (no action)
+Gen 1 (reconcile) → resource-gen-1-001 completed → Delete → Create resource-gen-1-002
+Gen 2 (updated)   → Delete resource-gen-1-002 → Create resource-gen-2-001 → Report status
+```
+
+### Configurable Resource Cleanup (Versioned Strategy Only)
+
+#### Cleanup Policies
+When using `updateStrategy: "versioned"`, the controller supports multiple configurable cleanup policies working together:
+
+1. **Generation-based**: Always clean old generations immediately
+2. **Count-based**: Keep N completed resources per generation and total
+3. **Age-based**: Clean resources older than configured duration
+4. **Status-based**: Optionally clean failed resources immediately
+5. **Safety**: Preserve running resources unless explicitly configured otherwise
+
+**Note**: Cleanup policies only apply to versioned strategy. In-place strategy maintains a single resource per cluster, so no cleanup is needed.
+
+#### Cleanup Configuration Examples
+
+**Conservative Cleanup** (Keep More History):
+```yaml
+resourceManagement:
+  updateStrategy: "versioned"
+  cleanup:
+    retentionPolicy:
+      completedResourcesPerGeneration: 5  # Keep 5 completed resources per generation
+      totalCompletedResources: 20         # Keep 20 total across all generations
+      maxAge: "7d"                        # Keep resources for 7 days
+    cleanupBehavior:
+      deleteFailedResources: false        # Keep failed resources for debugging
+      preserveRunningResources: true      # Never delete running resources
+```
+
+**Aggressive Cleanup** (Minimal Storage):
+```yaml
+resourceManagement:
+  updateStrategy: "versioned"
+  cleanup:
+    retentionPolicy:
+      completedResourcesPerGeneration: 1  # Keep only 1 completed resource per generation
+      totalCompletedResources: 3          # Keep only 3 total resources
+      maxAge: "2h"                        # Keep resources for 2 hours only
+    cleanupBehavior:
+      deleteFailedResources: true         # Clean up failed resources immediately
+      preserveRunningResources: true      # Still preserve running resources
+```
+
+#### Cleanup Implementation
+```go
+func (c *ResourceCleanupManager) CleanupResources(clusterID, currentGeneration string) error {
+    // 1. Get all resources for this cluster
+    resources, err := c.listResourcesByCluster(clusterID)
+    if err != nil {
+        return err
+    }
+
+    // 2. Clean up old generations (keep only current)
+    if err := c.cleanupOldGenerations(resources, currentGeneration); err != nil {
+        return err
+    }
+
+    // 3. Clean up excess resources in current generation by count
+    if err := c.cleanupExcessResourcesInGeneration(resources[currentGeneration]); err != nil {
+        return err
+    }
+
+    // 4. Clean up resources by age
+    if err := c.cleanupResourcesByAge(resources); err != nil {
+        return err
+    }
+
+    // 5. Clean up failed resources (if configured)
+    if c.config.DeleteFailedResources {
+        if err := c.cleanupFailedResources(resources); err != nil {
+            return err
+        }
+    }
+
+    return nil
+}
+```
 
 ### Two-Layer Status Reporting
 
@@ -607,12 +977,28 @@ spec:
       operator: "eq"
       value: "gcp"
 
+  # Resource management - Jobs require versioned strategy
+  resourceManagement:
+    updateStrategy: "versioned"  # Required for Jobs (immutable resources)
+    cleanup:
+      retentionPolicy:
+        completedResourcesPerGeneration: 2
+        totalCompletedResources: 5
+        maxAge: "24h"
+      cleanupBehavior:
+        deleteFailedResources: true
+        preserveRunningResources: true
+
   resourceTemplate: |
     apiVersion: batch/v1
     kind: Job
     metadata:
-      name: "gcp-validate-{{.cluster.id}}"
+      name: "gcp-validate-{{.cluster.id}}-gen-{{.cluster.generation}}-{{.timestamp}}"
       namespace: "cls-system"
+      labels:
+        cluster-id: "{{.cluster.id}}"
+        cluster-generation: "{{.cluster.generation}}"
+        controller: "gcp-environment-validation"
     spec:
       template:
         spec:
@@ -737,12 +1123,28 @@ spec:
       operator: "eq"
       value: true
 
+  # Conservative cleanup for long-running cluster creation
+  resourceManagement:
+    updateStrategy: "versioned"  # Required for Jobs (immutable resources)
+    cleanup:
+      retentionPolicy:
+        completedResourcesPerGeneration: 3
+        totalCompletedResources: 10
+        maxAge: "72h"
+      cleanupBehavior:
+        deleteFailedResources: false  # Keep failed resources for debugging
+        preserveRunningResources: true
+
   resourceTemplate: |
     apiVersion: batch/v1
     kind: Job
     metadata:
-      name: "maestro-create-{{.cluster.id}}"
+      name: "maestro-create-{{.cluster.id}}-gen-{{.cluster.generation}}-{{.timestamp}}"
       namespace: "cls-system"
+      labels:
+        cluster-id: "{{.cluster.id}}"
+        cluster-generation: "{{.cluster.generation}}"
+        controller: "maestro-hostedcluster"
     spec:
       template:
         spec:
@@ -787,6 +1189,65 @@ spec:
       status: "{{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}True{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}False{{else}}Unknown{{end}}"
       reason: "{{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}CreationSucceeded{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}CreationFailed{{else}}CreationInProgress{{end}}"
       message: "Cluster creation {{if eq .resource.status.conditions[?(@.type==\"Complete\")].status \"True\"}}completed successfully{{else if eq .resource.status.conditions[?(@.type==\"Failed\")].status \"True\"}}failed{{else}}is in progress{{end}}"
+```
+
+### Example 3: GCP Infrastructure with In-Place Updates
+
+```yaml
+apiVersion: cls.redhat.com/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: gcp-infrastructure
+  namespace: cls-system
+spec:
+  name: "gcp-infrastructure"
+  description: "Manages GCP infrastructure via CAPG operator"
+
+  # Only process GCP clusters
+  preconditions:
+    - field: "spec.provider"
+      operator: "eq"
+      value: "gcp"
+
+  # In-place strategy for mutable Custom Resources
+  resourceManagement:
+    updateStrategy: "in_place"  # Update existing GCPCluster resource
+    # No cleanup config needed - single resource per cluster
+
+  resourceTemplate: |
+    apiVersion: infrastructure.cluster.x-k8s.io/v1beta1
+    kind: GCPCluster
+    metadata:
+      name: "{{.cluster.name}}"  # Same name always
+      namespace: "{{.cluster.namespace}}"
+      labels:
+        cluster-id: "{{.cluster.id}}"
+        cluster-generation: "{{.cluster.generation}}"
+        controller: "gcp-infrastructure"
+    spec:
+      project: "{{.cluster.spec.gcp_project}}"
+      region: "{{.cluster.spec.region}}"
+      network:
+        name: "{{.cluster.spec.vpc_name | default .cluster.name}}-network"
+      credentialsRef:
+        name: gcp-credentials
+        namespace: "{{.cluster.namespace}}"
+
+  statusConditions:
+    - name: "Applied"
+      status: "True"
+      reason: "GCPClusterCreated"
+      message: "GCPCluster resource has been created/updated"
+
+    - name: "Available"
+      status: "{{if .resource.status.ready}}True{{else}}Unknown{{end}}"
+      reason: "{{if .resource.status.ready}}InfrastructureReady{{else}}InfrastructureProvisioning{{end}}"
+      message: "GCP infrastructure {{if .resource.status.ready}}is ready{{else}}is being provisioned{{end}}"
+
+    - name: "Healthy"
+      status: "{{if .resource.status.network.ready}}True{{else}}False{{end}}"
+      reason: "{{if .resource.status.network.ready}}NetworkHealthy{{else}}NetworkConfiguring{{end}}"
+      message: "VPC {{.resource.status.network.name}} {{if .resource.status.network.ready}}is healthy{{else}}is being configured{{end}}"
 ```
 
 ## 7. Implementation Plan
