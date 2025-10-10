@@ -63,6 +63,40 @@ spec:
                 type: string
                 description: "What this controller does"
 
+              # Optional: Configure where resources are created (local kube-api, remote kube-api, or maestro)
+              target:
+                type: object
+                properties:
+                  type:
+                    type: string
+                    enum: ["kube-api", "maestro"]
+                    default: "kube-api"
+                    description: "Target type for resource creation"
+                  kubeConfig:
+                    type: object
+                    description: "Kubeconfig for remote kube-api (optional, defaults to local)"
+                    properties:
+                      secretRef:
+                        type: object
+                        required: ["name", "key"]
+                        properties:
+                          name:
+                            type: string
+                            description: "Secret name containing kubeconfig"
+                          key:
+                            type: string
+                            description: "Key within secret containing kubeconfig"
+                  maestroConfig:
+                    type: object
+                    description: "Maestro configuration (templatable)"
+                    properties:
+                      endpoint:
+                        type: string
+                        description: "Templated maestro gRPC endpoint"
+                      consumer:
+                        type: string
+                        description: "Templated maestro consumer ID"
+
               # Optional: Only process events that match these conditions
               preconditions:
                 type: array
@@ -107,7 +141,7 @@ spec:
                       description: "Kubernetes resource YAML template"
                     resourceManagement:
                       type: object
-                      description: "Resource-specific update and cleanup strategies (overrides controller defaults)"
+                      description: "Resource-specific update and cleanup strategies"
                       properties:
                         updateStrategy:
                           type: string
@@ -115,29 +149,36 @@ spec:
                           description: "How to handle resource updates"
                         cleanup:
                           type: object
-                          description: "Cleanup policies (only applies when updateStrategy is 'versioned')"
+                          description: "Simple cleanup policies (only applies when updateStrategy is 'versioned')"
                           properties:
-                            retentionPolicy:
-                              type: object
-                              properties:
-                                completedResourcesPerGeneration:
-                                  type: integer
-                                  default: 2
-                                totalCompletedResources:
-                                  type: integer
-                                  default: 5
-                                maxAge:
-                                  type: string
-                                  default: "24h"
-                            cleanupBehavior:
-                              type: object
-                              properties:
-                                deleteFailedResources:
-                                  type: boolean
-                                  default: true
-                                preserveRunningResources:
-                                  type: boolean
-                                  default: true
+                            keepCompleted:
+                              type: integer
+                              default: 2
+                              description: "Number of completed resources to keep (total across all generations)"
+                            waitForCompletion:
+                              type: boolean
+                              default: false
+                              description: "Wait for old generation resources to complete before creating new ones"
+                            completionTimeout:
+                              type: string
+                              default: "300s"
+                              description: "Maximum time to wait for completion (only used if waitForCompletion is true)"
+                            completionDetection:
+                              type: array
+                              description: "How to detect if a resource has completed (required if waitForCompletion is true)"
+                              items:
+                                type: object
+                                required: ["field", "operator", "value"]
+                                properties:
+                                  field:
+                                    type: string
+                                    description: "Resource field path (e.g., 'status.phase', 'status.conditions[?(@.type==Complete)].status')"
+                                  operator:
+                                    type: string
+                                    enum: ["eq", "ne", "in", "notin", "exists", "notexists"]
+                                    description: "Comparison operator"
+                                  value:
+                                    description: "Value to compare against (string, array for in/notin, omit for exists/notexists)"
 
               # Multiple status conditions to report based on resource status
               statusConditions:
@@ -160,57 +201,6 @@ spec:
                       type: string
                       description: "Template expression for condition message"
 
-              # Resource management configuration
-              resourceManagement:
-                type: object
-                description: "Resource update and cleanup strategies"
-                properties:
-                  updateStrategy:
-                    type: string
-                    enum: ["in_place", "versioned"]
-                    default: "in_place"
-                    description: "How to handle resource updates: 'in_place' updates existing resource, 'versioned' creates new resource per generation"
-                  cleanup:
-                    type: object
-                    description: "Cleanup policies (only applies when updateStrategy is 'versioned')"
-                    properties:
-                      retentionPolicy:
-                        type: object
-                        description: "Resource retention settings"
-                        properties:
-                          completedResourcesPerGeneration:
-                            type: integer
-                            default: 2
-                            description: "Keep last N completed resources per generation"
-                          totalCompletedResources:
-                            type: integer
-                            default: 5
-                            description: "Keep last N completed resources across all generations"
-                          maxAge:
-                            type: string
-                            default: "24h"
-                            description: "Keep resources newer than this duration (e.g., '24h', '7d')"
-                      cleanupTrigger:
-                        type: string
-                        enum: ["before_create", "after_create", "periodic"]
-                        default: "before_create"
-                        description: "When to trigger cleanup"
-                      cleanupBehavior:
-                        type: object
-                        description: "Cleanup behavior settings"
-                        properties:
-                          deleteFailedResources:
-                            type: boolean
-                            default: true
-                            description: "Delete failed resources immediately"
-                          preserveRunningResources:
-                            type: boolean
-                            default: true
-                            description: "Keep running resources (safety)"
-                          deletionGracePeriod:
-                            type: string
-                            default: "30s"
-                            description: "Grace period before forced deletion"
 
           status:
             type: object
@@ -342,12 +332,45 @@ preconditions:
 ```
 
 ### Supported Operators
+Both preconditions and completion detection use the same operators:
 - **eq**: Field equals value
 - **ne**: Field not equals value
 - **in**: Field value is in array
 - **notin**: Field value is not in array
 - **exists**: Field exists (any value)
 - **notexists**: Field does not exist
+
+### Unified Syntax: Preconditions and Completion Detection
+
+**Consistency Achievement**: Both systems now use identical syntax for field evaluation:
+
+**Preconditions** (evaluating cluster data from cls-backend):
+```yaml
+preconditions:
+  - field: "spec.provider"
+    operator: "eq"
+    value: "gcp"
+  - field: "status.assignedConsumer"
+    operator: "exists"
+```
+
+**Completion Detection** (evaluating resource status from Kubernetes):
+```yaml
+completionDetection:
+  - field: "status.conditions[?(@.type=='Complete')].status"
+    operator: "eq"
+    value: "True"
+  - field: "status.failed"
+    operator: "eq"
+    value: 0
+```
+
+**Benefits of Unified Syntax**:
+- **Same operators**: `eq`, `ne`, `in`, `notin`, `exists`, `notexists` work identically
+- **Same structure**: Array of field evaluations with field/operator/value pattern
+- **Same logic**: All conditions must be true (AND logic)
+- **Same flexibility**: Support for nested paths and complex field access
+- **No special cases**: Everything is just field evaluation with operators
 
 
 ### Status Condition Examples
@@ -440,9 +463,464 @@ Event 2 (reconcile): Permission denied → Report "Applied: False, reason: Resou
 Event 3 (reconcile): Permissions fixed → Create Job → Report "Applied: True, Available: Unknown"
 ```
 
+**Waiting for Completion Path (Versioned Strategy)**:
+```
+Event 1 (created):  Create Job gen-42 → Report "Applied: True, Available: Unknown, observedGeneration: 42"
+Event 2 (reconcile): Job running → Report "Applied: True, Available: Unknown, observedGeneration: 42"
+Event 3 (updated): New generation 43, old job still running → Report "Applied: False, reason: WaitingForCompletion, observedGeneration: 43"
+Event 4 (reconcile): Still waiting → Report "Applied: False, reason: WaitingForCompletion, observedGeneration: 43"
+Event 5 (reconcile): Old job completed, new job created → Report "Applied: True, Available: Unknown, observedGeneration: 43"
+```
+
 The cls-backend scheduler determines how often to send reconcile events based on the resource type and expected completion time.
 
-## 3a. Resource Update Strategies
+### Waiting for Completion Status Reporting
+
+When using `waitForCompletion: true` in versioned strategy, the controller provides clear visibility into waiting states:
+
+#### Status Conditions During Waiting
+
+**Key Status Fields**:
+- **observedGeneration**: Always set to the NEW generation (the one being processed)
+- **Applied**: "False" when waiting, "True" after resource created
+- **reason**: Specific reason codes for different waiting states
+- **message**: Human-readable explanation of what's happening
+
+#### Common Waiting States
+
+**WaitingForCompletion**: Normal waiting state
+```json
+{
+  "cluster_id": "cluster-123",
+  "controller_name": "gcp-environment-validation",
+  "observed_generation": 43,
+  "conditions": [
+    {
+      "name": "Applied",
+      "status": "False",
+      "reason": "WaitingForCompletion",
+      "message": "Waiting for previous generation resource 'gcp-validate-cluster-123-gen-42-001' to complete before creating generation 43 resource"
+    }
+  ],
+  "resources": {
+    "validation-job": {
+      "status": "Running",
+      "resource_status": {
+        // Status of the OLD generation resource (gen-42) that we're waiting for
+        "generation": 1,
+        "conditions": [
+          {
+            "type": "Complete",
+            "status": "False"
+          }
+        ],
+        "active": 1,
+        "succeeded": 0
+      }
+    }
+  }
+}
+```
+
+**CompletionTimeout**: Timeout expired, forced cleanup
+```json
+{
+  "conditions": [
+    {
+      "name": "Applied",
+      "status": "False",
+      "reason": "CompletionTimeout",
+      "message": "Completion timeout (600s) expired, force deleted previous generation resource and created new one"
+    }
+  ]
+}
+```
+
+#### Implementation Logic
+
+```go
+func (c *Controller) HandleClusterEvent(event *ClusterEvent) error {
+    cluster, err := c.apiClient.GetCluster(ctx, event.ClusterID)
+    if err != nil {
+        return err
+    }
+
+    // Check if we're waiting for previous generation to complete
+    if c.isWaitingForCompletion(cluster) {
+        return c.reportWaitingStatus(cluster)
+    }
+
+    // Normal processing...
+    resources, err := c.getOrCreateAllResources(cluster)
+    // ...
+}
+
+func (c *Controller) reportWaitingStatus(cluster *Cluster) error {
+    // Get the old generation resource we're waiting for
+    oldResource, err := c.findPreviousGenerationResource(cluster)
+    if err != nil {
+        return err
+    }
+
+    status := &StatusReport{
+        ClusterID:          cluster.ID,
+        ObservedGeneration: cluster.Generation, // NEW generation
+        Conditions: []Condition{
+            {
+                Name:    "Applied",
+                Status:  "False",
+                Reason:  "WaitingForCompletion",
+                Message: fmt.Sprintf("Waiting for previous generation resource '%s' to complete", oldResource.GetName()),
+            },
+        },
+        Resources: map[string]ResourceStatus{
+            c.resourceName: {
+                Status:         "Running", // Status of OLD resource
+                ResourceStatus: oldResource.Object["status"],
+            },
+        },
+    }
+
+    return c.apiClient.ReportStatus(ctx, status)
+}
+```
+
+This approach ensures:
+- **Complete visibility**: Users know exactly why their new generation isn't applied yet
+- **Clear observedGeneration**: Always reflects the generation being processed
+- **Resource status continuity**: Shows status of the resource we're waiting for
+- **Actionable information**: Users can see timeout settings and current wait time
+
+## 3a. Controller Target Configuration
+
+The controller supports multiple target types for resource creation, allowing flexible deployment scenarios from local Kubernetes clusters to remote clusters via Maestro.
+
+### Target Types
+
+#### 1. **Local Kube-API** (Default)
+```yaml
+# No target configuration needed - defaults to local cluster
+spec:
+  resources:
+    - name: "dns-zone"
+      template: |
+        apiVersion: dns.cnrm.cloud.google.com/v1beta1
+        kind: DNSManagedZone
+        # ...
+```
+
+#### 2. **Remote Kube-API**
+```yaml
+spec:
+  target:
+    type: "kube-api"
+    kubeConfig:
+      secretRef:
+        name: "remote-cluster-kubeconfig"
+        key: "kubeconfig"
+
+  resources:
+    - name: "remote-resource"
+      template: |
+        apiVersion: v1
+        kind: Namespace
+        # ...
+```
+
+#### 3. **Maestro API** (Placement-Driven)
+```yaml
+spec:
+  target:
+    type: "maestro"
+    maestroConfig:
+      endpoint: "{{.cluster.status.maestroEndpoint}}"
+      consumer: "{{.cluster.status.assignedConsumer}}"
+
+  preconditions:
+    - field: "status.assignedConsumer"
+      operator: "exists"
+    - field: "status.maestroEndpoint"
+      operator: "exists"
+
+  resources:
+    - name: "hosted-cluster"
+      template: |
+        apiVersion: hypershift.openshift.io/v1beta1
+        kind: HostedCluster
+        # ...
+```
+
+### Target Selection Benefits
+
+1. **Unified Interface**: Same `.resources.resource-name.status` regardless of target type
+2. **Template-Driven**: Maestro endpoints and consumers come from placement decisions
+3. **Precondition-Driven**: Natural dependencies ensure placement data exists
+4. **Flexible Deployment**: Mix local, remote, and maestro targets across controllers
+5. **Consistent Status**: Status conditions work identically across all target types
+
+### Template Context for Maestro Targets
+
+When using Maestro targets, templates have access to placement decision status:
+- `.cluster.status.assignedConsumer` - Consumer ID from placement controller
+- `.cluster.status.maestroEndpoint` - Maestro gRPC endpoint from placement controller
+- `.cluster.status.hostingCluster` - Hosting cluster identifier (optional)
+- `.cluster.status.region` - Target region (optional)
+
+### Client Selection and Management
+
+The controller automatically selects and manages the appropriate client based on the target configuration, providing a unified interface regardless of the underlying target type.
+
+#### Client Types and Selection Logic
+
+```go
+type ClientManager struct {
+    localClient   client.Client       // Default local Kubernetes client
+    remoteClients map[string]client.Client  // Cached remote kube clients by secret key
+    maestroClients map[string]*maestro.Client  // Cached Maestro clients by endpoint
+    secretClient  client.Client       // Client for reading kubeconfig secrets
+    logger        *zap.Logger
+}
+
+// GetClient returns the appropriate client based on target configuration
+func (cm *ClientManager) GetClient(ctx context.Context, target *TargetConfig, cluster *Cluster) (ResourceClient, error) {
+    switch target.Type {
+    case "kube-api", "":  // Default to kube-api
+        return cm.getKubeAPIClient(ctx, target, cluster)
+    case "maestro":
+        return cm.getMaestroClient(ctx, target, cluster)
+    default:
+        return nil, fmt.Errorf("unsupported target type: %s", target.Type)
+    }
+}
+
+// getKubeAPIClient returns local or remote Kubernetes client
+func (cm *ClientManager) getKubeAPIClient(ctx context.Context, target *TargetConfig, cluster *Cluster) (client.Client, error) {
+    // No kubeConfig specified - use local cluster
+    if target.KubeConfig == nil {
+        return cm.localClient, nil
+    }
+
+    // Remote cluster - get client from kubeconfig secret
+    secretKey := fmt.Sprintf("%s/%s", target.KubeConfig.SecretRef.Name, target.KubeConfig.SecretRef.Key)
+
+    // Check cache first
+    if client, exists := cm.remoteClients[secretKey]; exists {
+        return client, nil
+    }
+
+    // Create new remote client from secret
+    kubeconfig, err := cm.getKubeConfigFromSecret(ctx, target.KubeConfig.SecretRef)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get kubeconfig from secret: %w", err)
+    }
+
+    remoteClient, err := cm.createRemoteClient(kubeconfig)
+    if err != nil {
+        return nil, fmt.Errorf("failed to create remote client: %w", err)
+    }
+
+    // Cache the client
+    cm.remoteClients[secretKey] = remoteClient
+    return remoteClient, nil
+}
+
+// getMaestroClient returns Maestro gRPC client with templated configuration
+func (cm *ClientManager) getMaestroClient(ctx context.Context, target *TargetConfig, cluster *Cluster) (*maestro.Client, error) {
+    // Render templated endpoint and consumer
+    endpoint, err := cm.renderTemplate(target.MaestroConfig.Endpoint, cluster)
+    if err != nil {
+        return nil, fmt.Errorf("failed to render maestro endpoint: %w", err)
+    }
+
+    consumer, err := cm.renderTemplate(target.MaestroConfig.Consumer, cluster)
+    if err != nil {
+        return nil, fmt.Errorf("failed to render maestro consumer: %w", err)
+    }
+
+    clientKey := fmt.Sprintf("%s/%s", endpoint, consumer)
+
+    // Check cache first
+    if client, exists := cm.maestroClients[clientKey]; exists {
+        return client, nil
+    }
+
+    // Create new Maestro client
+    maestroClient, err := maestro.NewClient(&maestro.Config{
+        Endpoint: endpoint,
+        Consumer: consumer,
+        TLS:      cm.getTLSConfig(), // Configure TLS from controller config
+    })
+    if err != nil {
+        return nil, fmt.Errorf("failed to create maestro client: %w", err)
+    }
+
+    // Cache the client
+    cm.maestroClients[clientKey] = maestroClient
+    return maestroClient, nil
+}
+```
+
+#### Unified Resource Client Interface
+
+The controller abstracts different target types behind a common interface:
+
+```go
+type ResourceClient interface {
+    Create(ctx context.Context, resource *unstructured.Unstructured) error
+    Update(ctx context.Context, resource *unstructured.Unstructured) error
+    Get(ctx context.Context, name, namespace string) (*unstructured.Unstructured, error)
+    Delete(ctx context.Context, resource *unstructured.Unstructured) error
+    List(ctx context.Context, namespace string, labels map[string]string) (*unstructured.UnstructuredList, error)
+}
+
+// KubeAPIClient wraps Kubernetes client.Client
+type KubeAPIClient struct {
+    client.Client
+}
+
+// MaestroClient wraps Maestro gRPC client and converts to Kubernetes-like interface
+type MaestroClient struct {
+    *maestro.Client
+    consumer string
+}
+
+// Create implements ResourceClient for Maestro
+func (mc *MaestroClient) Create(ctx context.Context, resource *unstructured.Unstructured) error {
+    manifestWork := &maestro.ManifestWork{
+        Consumer:  mc.consumer,
+        Resources: []*unstructured.Unstructured{resource},
+    }
+
+    _, err := mc.Client.CreateManifestWork(ctx, manifestWork)
+    return err
+}
+
+// Get implements ResourceClient for Maestro
+func (mc *MaestroClient) Get(ctx context.Context, name, namespace string) (*unstructured.Unstructured, error) {
+    manifestWork, err := mc.Client.GetManifestWork(ctx, &maestro.GetRequest{
+        Consumer:  mc.consumer,
+        Name:      name,
+        Namespace: namespace,
+    })
+    if err != nil {
+        return nil, err
+    }
+
+    // Return the resource with status populated from Maestro
+    if len(manifestWork.Resources) > 0 {
+        resource := manifestWork.Resources[0]
+        // Merge status from ManifestWork into resource
+        if manifestWork.Status != nil {
+            resource.Object["status"] = manifestWork.Status
+        }
+        return resource, nil
+    }
+
+    return nil, fmt.Errorf("resource not found")
+}
+```
+
+#### Client Lifecycle Management
+
+```go
+// Controller initialization
+func (c *Controller) setupClientManager() error {
+    cm := &ClientManager{
+        localClient:    c.k8sClient,
+        remoteClients:  make(map[string]client.Client),
+        maestroClients: make(map[string]*maestro.Client),
+        secretClient:   c.k8sClient, // Use local client to read secrets
+        logger:         c.logger,
+    }
+
+    c.clientManager = cm
+    return nil
+}
+
+// Resource operations use the selected client transparently
+func (c *Controller) getOrCreateResource(resourceConfig ResourceConfig, cluster *Cluster) (*unstructured.Unstructured, error) {
+    // Get appropriate client based on target config
+    resourceClient, err := c.clientManager.GetClient(ctx, c.config.Target, cluster)
+    if err != nil {
+        return nil, fmt.Errorf("failed to get client: %w", err)
+    }
+
+    // Render template
+    resource, err := c.renderTemplate(resourceConfig.Template, cluster)
+    if err != nil {
+        return nil, err
+    }
+
+    // Check if resource exists
+    existing, err := resourceClient.Get(ctx, resource.GetName(), resource.GetNamespace())
+    if err != nil {
+        // Resource doesn't exist - create it
+        if err := resourceClient.Create(ctx, resource); err != nil {
+            return nil, fmt.Errorf("failed to create resource: %w", err)
+        }
+        return resource, nil
+    }
+
+    // Resource exists - update if needed
+    if c.needsUpdate(existing, resource) {
+        if err := resourceClient.Update(ctx, resource); err != nil {
+            return nil, fmt.Errorf("failed to update resource: %w", err)
+        }
+    }
+
+    return existing, nil
+}
+```
+
+#### Client Caching and Performance
+
+1. **Local Client**: Single instance shared across all controllers
+2. **Remote Clients**: Cached by secret reference (`secretName/keyName`)
+3. **Maestro Clients**: Cached by endpoint/consumer combination
+4. **Connection Pooling**: Maestro clients use gRPC connection pooling
+5. **Secret Watching**: Optional secret watching for remote client cache invalidation
+
+#### Error Handling and Fallbacks
+
+```go
+func (cm *ClientManager) getMaestroClient(ctx context.Context, target *TargetConfig, cluster *Cluster) (*maestro.Client, error) {
+    client, err := cm.createMaestroClient(ctx, target, cluster)
+    if err != nil {
+        // Log specific error for debugging
+        cm.logger.Error("Failed to create Maestro client",
+            zap.String("cluster", cluster.ID),
+            zap.String("endpoint", target.MaestroConfig.Endpoint),
+            zap.Error(err))
+
+        // Return error - no fallback for Maestro (placement decision required)
+        return nil, fmt.Errorf("maestro client creation failed: %w", err)
+    }
+
+    return client, nil
+}
+
+// Health checking for long-lived connections
+func (cm *ClientManager) healthCheckClients(ctx context.Context) {
+    // Periodically health check cached Maestro connections
+    for endpoint, client := range cm.maestroClients {
+        if err := client.Health(ctx); err != nil {
+            cm.logger.Warn("Maestro client unhealthy, removing from cache",
+                zap.String("endpoint", endpoint),
+                zap.Error(err))
+            delete(cm.maestroClients, endpoint)
+        }
+    }
+}
+```
+
+This client selection system provides:
+- **Transparent abstraction**: Same resource operations regardless of target type
+- **Efficient caching**: Reuse connections across multiple clusters
+- **Template-driven configuration**: Dynamic client configuration based on cluster data
+- **Error isolation**: Client failures don't affect other target types
+- **Performance optimization**: Connection pooling and caching for scalability
+
+## 3b. Resource Update Strategies
 
 The controller supports two distinct update strategies to handle different types of Kubernetes resources and operational requirements:
 
@@ -456,17 +934,20 @@ The controller supports two distinct update strategies to handle different types
 ### When Each Strategy is Used
 
 #### Automatic Strategy Selection
-The controller automatically determines the appropriate strategy based on resource type:
+The controller automatically determines the appropriate strategy based on resource type and per-resource configuration:
 
 ```go
-func (c *Controller) determineUpdateStrategy(resourceKind string) string {
+func (c *Controller) determineUpdateStrategy(resourceConfig ResourceConfig, resourceKind string) string {
     // Force versioned strategy for immutable resources
     if c.isImmutableResourceKind(resourceKind) {
         return "versioned"
     }
 
-    // Use configured strategy for mutable resources
-    return c.config.ResourceManagement.UpdateStrategy
+    // Use per-resource configured strategy, defaulting to in_place for mutable resources
+    if resourceConfig.ResourceManagement != nil && resourceConfig.ResourceManagement.UpdateStrategy != "" {
+        return resourceConfig.ResourceManagement.UpdateStrategy
+    }
+    return "in_place"  // Default for mutable resources
 }
 
 func (c *Controller) isImmutableResourceKind(kind string) bool {
@@ -503,13 +984,11 @@ kind: ControllerConfig
 metadata:
   name: cluster-dns-zone
 spec:
-  # Default resource management (can be overridden per resource)
-  resourceManagement:
-    updateStrategy: "in_place"  # Default - no cleanup needed
-
   resources:
     - name: "dns-subzone"
       description: "DNS sub-zone for cluster delegation"
+      resourceManagement:
+        updateStrategy: "in_place"  # Config Connector resources are mutable
       template: |
         apiVersion: dns.cnrm.cloud.google.com/v1beta1
         kind: DNSManagedZone
@@ -524,19 +1003,19 @@ kind: ControllerConfig
 metadata:
   name: gcp-validation
 spec:
-  # Default resource management
-  resourceManagement:
-    updateStrategy: "versioned"  # Creates new resource per generation
-    cleanup:
-      retentionPolicy:
-        completedResourcesPerGeneration: 2
-        maxAge: "24h"
-      cleanupBehavior:
-        deleteFailedResources: true
-
   resources:
     - name: "validation-job"
       description: "GCP environment validation job"
+      resourceManagement:
+        updateStrategy: "versioned"  # Required for Jobs (immutable resources)
+        cleanup:
+          keepCompleted: 3            # Keep 3 completed resources total
+          waitForCompletion: true     # Wait for old generation to complete
+          completionTimeout: "600s"   # Wait max 10 minutes
+          completionDetection:
+            - field: "status.conditions[?(@.type=='Complete')].status"
+              operator: "eq"
+              value: "True"
       template: |
         apiVersion: batch/v1
         kind: Job
@@ -580,22 +1059,342 @@ The controller supports two resource update strategies to handle different use c
 
 #### Resource Strategy Selection
 ```go
-func (c *Controller) determineUpdateStrategy(resourceKind string) string {
+func (c *Controller) determineUpdateStrategy(resourceConfig ResourceConfig, resourceKind string) string {
     // Force versioned strategy for immutable resources
     if c.isImmutableResourceKind(resourceKind) {
         return "versioned"
     }
 
-    // Use configured strategy for mutable resources
-    return c.config.ResourceManagement.UpdateStrategy
+    // Use per-resource configured strategy, defaulting to in_place for mutable resources
+    if resourceConfig.ResourceManagement != nil && resourceConfig.ResourceManagement.UpdateStrategy != "" {
+        return resourceConfig.ResourceManagement.UpdateStrategy
+    }
+    return "in_place"  // Default for mutable resources
 }
 ```
 
 **Key Principles for Versioned Strategy**:
 1. **One active resource per cluster** at any time
-2. **Generation-aware cleanup** - delete resources from old generations immediately
+2. **Generation-aware cleanup** - configurable old generation cleanup behavior
 3. **Continuous enforcement** - recreate completed resources within same generation
 4. **Incremental naming** - `resource-{cluster-id}-gen-{generation}-{timestamp}`
+
+#### Generation Transition Behavior
+
+The controller supports simple behavior when transitioning to a new cluster generation:
+
+```yaml
+resourceManagement:
+  updateStrategy: "versioned"
+  cleanup:
+    waitForCompletion: true     # Wait for old generation to complete before creating new
+    completionTimeout: "300s"   # Max time to wait before force deletion
+    completionDetection:
+      - field: "status.conditions[?(@.type=='Complete')].status"
+        operator: "eq"
+        value: "True"
+```
+
+**Transition Strategies:**
+
+1. **`waitForCompletion: true`** (Recommended for Jobs):
+   ```go
+   func (c *Controller) getOrCreateVersionedResource(cluster *Cluster) (*unstructured.Unstructured, error) {
+       // 1. Check for old generation resources
+       oldGenResources, err := c.findResourcesForPreviousGenerations(cluster.ID, cluster.Generation)
+       if err != nil {
+           return nil, err
+       }
+
+       // 2. Wait for old generation completion if configured
+       if c.config.Cleanup.WaitForCompletion {
+           for _, oldResource := range oldGenResources {
+               if c.isResourceCompleted(oldResource, c.config.Cleanup.CompletionDetection) {
+                   // Resource completed - safe to delete
+                   c.k8sClient.Delete(ctx, oldResource)
+               } else if c.hasTimeoutExpired(oldResource, c.config.Cleanup.CompletionTimeout) {
+                   // Timeout expired - force delete
+                   c.k8sClient.Delete(ctx, oldResource)
+               } else {
+                   // Still running within timeout - wait
+                   return nil, fmt.Errorf("waiting for old generation resource to complete: %s", oldResource.GetName())
+               }
+           }
+       }
+
+       // 3. Create new generation resource
+       return c.createVersionedResource(cluster)
+   }
+   ```
+
+2. **`waitForCompletion: false`** (Default - Immediate):
+   ```go
+   func (c *Controller) getOrCreateVersionedResource(cluster *Cluster) (*unstructured.Unstructured, error) {
+       // 1. Immediately cleanup old generation resources
+       if err := c.cleanupOldGenerations(cluster.ID, cluster.Generation); err != nil {
+           return nil, err
+       }
+
+       // 2. Create new generation resource immediately
+       return c.createVersionedResource(cluster)
+   }
+   ```
+
+#### Generation Transition Examples
+
+**Scenario 1: GCP Validation Job (waitForCompletion: true)**
+```
+Gen 42 → Gen 43 Transition:
+Time 0:  Job validate-cluster-123-gen-42-001 is running (30% complete)
+Time 1:  Cluster generation updates to 43
+Time 2:  Controller waits for gen-42 job to complete (completionTimeout: 600s)
+         Report: Applied=False, reason=WaitingForCompletion, observedGeneration=43
+Time 3:  Controller continues waiting, reports same status
+Time 8:  Job validate-cluster-123-gen-42-001 completes successfully
+Time 9:  Delete gen-42 job, create validate-cluster-123-gen-43-001
+         Report: Applied=True, Available=Unknown, observedGeneration=43
+```
+
+**Scenario 2: DNS Zone (in_place strategy - immediate)**
+```
+Gen 42 → Gen 43 Transition:
+Time 0:  DNSManagedZone cluster-dns-zone exists with gen-42 config
+Time 1:  Cluster generation updates to 43
+Time 2:  Update DNSManagedZone cluster-dns-zone spec immediately (same resource)
+```
+
+**Scenario 3: Maestro HostedCluster (in_place strategy)**
+```
+Gen 42 → Gen 43 Transition:
+Time 0:  HostedCluster production-west exists with gen-42 spec
+Time 1:  Cluster generation updates to 43
+Time 2:  Update HostedCluster production-west spec via Maestro API immediately
+```
+
+**Scenario 4: Validation Job with Completion Timeout**
+```
+Gen 42 → Gen 43 Transition:
+Time 0:   Job validate-cluster-123-gen-42-001 is running
+Time 1:   Cluster generation updates to 43
+Time 2:   Controller waits (completionTimeout: 600s starts)
+          Report: Applied=False, reason=WaitingForCompletion, observedGeneration=43
+Time 300: Controller still waiting, reports same status
+Time 602: Timeout expires, job still running
+          Report: Applied=False, reason=CompletionTimeout, observedGeneration=43
+Time 603: Force delete gen-42 job, create validate-cluster-123-gen-43-001
+          Report: Applied=True, Available=Unknown, observedGeneration=43
+```
+
+#### Resource Completion Detection
+
+You're absolutely right - **Jobs aren't the only type that might need versioned resources!** The controller needs configurable completion detection for different resource types:
+
+**Versioned Strategy Use Cases:**
+1. **Immutable Resources**: Jobs, Pods (forced by API)
+2. **Audit Trail**: Any resource where you need full operation history
+3. **Compliance**: Regulatory requirements for change tracking
+4. **Continuous Enforcement**: Resources that should be recreated regularly
+5. **Rollback Capability**: Easy rollback to previous generations
+
+#### Explicit Completion Detection
+
+All completion detection is explicit - no built-in magic. When using `waitForCompletion: true`, you must specify how to detect completion:
+
+```go
+// Unified completion detection using same syntax as preconditions
+func (c *Controller) isResourceCompleted(resource *unstructured.Unstructured, detectionRules []CompletionRule) bool {
+    // All rules must be true for completion
+    for _, rule := range detectionRules {
+        if !c.evaluateCompletionRule(resource, rule) {
+            return false
+        }
+    }
+    return true
+}
+
+// Evaluate single completion rule (same logic as precondition evaluation)
+func (c *Controller) evaluateCompletionRule(resource *unstructured.Unstructured, rule CompletionRule) bool {
+    // Extract field value from resource (supports nested paths and JSONPath-like syntax)
+    value, exists := c.extractResourceFieldValue(resource, rule.Field)
+
+    switch rule.Operator {
+    case "eq":
+        return exists && fmt.Sprintf("%v", value) == fmt.Sprintf("%v", rule.Value)
+    case "ne":
+        return exists && fmt.Sprintf("%v", value) != fmt.Sprintf("%v", rule.Value)
+    case "exists":
+        return exists
+    case "notexists":
+        return !exists
+    case "in":
+        if !exists { return false }
+        valueArray, ok := rule.Value.([]interface{})
+        if !ok { return false }
+        valueStr := fmt.Sprintf("%v", value)
+        for _, item := range valueArray {
+            if fmt.Sprintf("%v", item) == valueStr {
+                return true
+            }
+        }
+        return false
+    case "notin":
+        // Similar to "in" but inverted logic
+        // ... implementation
+    }
+    return false
+}
+
+// Extract field value from resource (supports JSONPath-like syntax for conditions)
+func (c *Controller) extractResourceFieldValue(resource *unstructured.Unstructured, fieldPath string) (interface{}, bool) {
+    // Handle special JSONPath-like syntax for conditions
+    if strings.Contains(fieldPath, "conditions[?(@.type==") {
+        return c.extractConditionValue(resource, fieldPath)
+    }
+
+    // Handle normal dot notation (e.g., "status.phase")
+    parts := strings.Split(fieldPath, ".")
+    value, found, err := unstructured.NestedFieldNoCopy(resource.Object, parts...)
+    if err != nil {
+        return nil, false
+    }
+    return value, found
+}
+
+// Extract value from conditions array using JSONPath-like syntax
+func (c *Controller) extractConditionValue(resource *unstructured.Unstructured, fieldPath string) (interface{}, bool) {
+    // Parse "status.conditions[?(@.type=='Complete')].status" syntax
+    // ... implementation to find condition by type and extract status
+}
+```
+
+**Strategy 1: Condition-Based (Jobs)**
+```yaml
+resourceManagement:
+  updateStrategy: "versioned"
+  cleanup:
+    waitForCompletion: true
+    completionDetection:
+      - field: "status.conditions[?(@.type=='Complete')].status"
+        operator: "eq"
+        value: "True"
+```
+
+**Strategy 2: Field-Based (Pods)**
+```yaml
+resourceManagement:
+  updateStrategy: "versioned"
+  cleanup:
+    waitForCompletion: true
+    completionDetection:
+      - field: "status.phase"
+        operator: "eq"
+        value: "Succeeded"
+```
+
+**Strategy 3: No Waiting (ConfigMaps)**
+```yaml
+resourceManagement:
+  updateStrategy: "versioned"
+  cleanup:
+    waitForCompletion: false  # Don't wait - immediately delete old and create new
+    keepCompleted: 5          # Keep 5 versions for audit trail
+```
+
+#### Versioned Strategy Examples Beyond Jobs
+
+**Example 1: Job with Explicit Completion**
+```yaml
+resources:
+  - name: "validation-job"
+    description: "Validation job with explicit completion detection"
+    resourceManagement:
+      updateStrategy: "versioned"
+      cleanup:
+        keepCompleted: 2
+        waitForCompletion: true
+        completionDetection:
+          - field: "status.conditions[?(@.type=='Complete')].status"
+            operator: "eq"
+            value: "True"
+```
+
+**Example 2: Deployment with Readiness Check**
+```yaml
+resources:
+  - name: "security-scanner"
+    description: "Security scanner that should be recreated regularly"
+    resourceManagement:
+      updateStrategy: "versioned"
+      cleanup:
+        keepCompleted: 1             # Only keep 1 for quick turnover
+        waitForCompletion: true
+        completionTimeout: "300s"
+        completionDetection:
+          - field: "status.conditions[?(@.type=='Available')].status"
+            operator: "eq"
+            value: "True"
+```
+
+**Example 3: ConfigMap for Audit Trail (No Waiting)**
+```yaml
+resources:
+  - name: "cluster-config"
+    description: "Versioned cluster configuration for audit trail"
+    resourceManagement:
+      updateStrategy: "versioned"
+      cleanup:
+        keepCompleted: 10            # Keep 10 versions for audit
+        waitForCompletion: false     # ConfigMaps don't need to "complete"
+```
+
+**Example 4: Custom Resource with Field-Based Completion**
+```yaml
+resources:
+  - name: "backup-job"
+    description: "Custom backup resource"
+    resourceManagement:
+      updateStrategy: "versioned"
+      cleanup:
+        keepCompleted: 3
+        waitForCompletion: true
+        completionDetection:
+          - field: "status.backupState"
+            operator: "eq"
+            value: "Completed"
+```
+
+#### Unified Syntax Benefits
+
+**Consistent & Predictable:**
+- **Same syntax** for preconditions (cluster evaluation) and completion detection (resource evaluation)
+- **Familiar operators**: All use the same `eq`, `ne`, `in`, `notin`, `exists`, `notexists` operators
+- **Flexible field access**: Support for nested paths and JSONPath-like syntax for conditions
+- **No special cases**: Everything is just field evaluation with operators
+
+**Common Completion Patterns:**
+- **Jobs**: `field: "status.conditions[?(@.type=='Complete')].status", operator: "eq", value: "True"`
+- **Pods**: `field: "status.phase", operator: "eq", value: "Succeeded"`
+- **Deployments**: `field: "status.conditions[?(@.type=='Available')].status", operator: "eq", value: "True"`
+- **ConfigMaps/Secrets**: `waitForCompletion: false` (no detection needed)
+- **Existence checks**: `field: "status.observedGeneration", operator: "exists"`
+
+**Advanced Examples:**
+```yaml
+# Multiple conditions (all must be true)
+completionDetection:
+  - field: "status.conditions[?(@.type=='Complete')].status"
+    operator: "eq"
+    value: "True"
+  - field: "status.failed"
+    operator: "eq"
+    value: 0
+
+# Complex field paths
+completionDetection:
+  - field: "status.deployment.readyReplicas"
+    operator: "eq"
+    value: 3
+```
 
 #### Resource Management Logic
 
@@ -689,77 +1488,64 @@ Gen 1 (reconcile) → resource-gen-1-001 completed → Delete → Create resourc
 Gen 2 (updated)   → Delete resource-gen-1-002 → Create resource-gen-2-001 → Report status
 ```
 
-### Configurable Resource Cleanup (Versioned Strategy Only)
+### Simple Resource Cleanup (Versioned Strategy Only)
 
-#### Cleanup Policies
-When using `updateStrategy: "versioned"`, the controller supports multiple configurable cleanup policies working together:
+#### Cleanup Philosophy
+When using `updateStrategy: "versioned"`, the controller supports simple, predictable cleanup:
 
-1. **Generation-based**: Always clean old generations immediately
-2. **Count-based**: Keep N completed resources per generation and total
-3. **Age-based**: Clean resources older than configured duration
-4. **Status-based**: Optionally clean failed resources immediately
-5. **Safety**: Preserve running resources unless explicitly configured otherwise
+1. **Keep N completed resources** - Simple count across all generations
+2. **Optional wait for completion** - Simple boolean with timeout
+3. **Always delete old generations** - Clean slate for each generation
+4. **Never delete running resources** - Safety built-in
 
 **Note**: Cleanup policies only apply to versioned strategy. In-place strategy maintains a single resource per cluster, so no cleanup is needed.
 
-#### Cleanup Configuration Examples
+#### Simple Cleanup Configuration Examples
 
-**Conservative Cleanup** (Keep More History):
+**Job with Waiting** (Recommended):
 ```yaml
 resourceManagement:
   updateStrategy: "versioned"
   cleanup:
-    retentionPolicy:
-      completedResourcesPerGeneration: 5  # Keep 5 completed resources per generation
-      totalCompletedResources: 20         # Keep 20 total across all generations
-      maxAge: "7d"                        # Keep resources for 7 days
-    cleanupBehavior:
-      deleteFailedResources: false        # Keep failed resources for debugging
-      preserveRunningResources: true      # Never delete running resources
+    keepCompleted: 3               # Keep 3 completed resources total
+    waitForCompletion: true        # Wait for old generation to complete
+    completionTimeout: "600s"      # Max 10 minutes
+    completionDetection:
+      - field: "status.conditions[?(@.type=='Complete')].status"
+        operator: "eq"
+        value: "True"
 ```
 
-**Aggressive Cleanup** (Minimal Storage):
+**Audit Trail ConfigMap** (No Waiting):
 ```yaml
 resourceManagement:
   updateStrategy: "versioned"
   cleanup:
-    retentionPolicy:
-      completedResourcesPerGeneration: 1  # Keep only 1 completed resource per generation
-      totalCompletedResources: 3          # Keep only 3 total resources
-      maxAge: "2h"                        # Keep resources for 2 hours only
-    cleanupBehavior:
-      deleteFailedResources: true         # Clean up failed resources immediately
-      preserveRunningResources: true      # Still preserve running resources
+    keepCompleted: 10              # Keep 10 versions for audit
+    waitForCompletion: false       # Immediate replacement
 ```
 
-#### Cleanup Implementation
+#### Simple Cleanup Implementation
 ```go
 func (c *ResourceCleanupManager) CleanupResources(clusterID, currentGeneration string) error {
-    // 1. Get all resources for this cluster
-    resources, err := c.listResourcesByCluster(clusterID)
+    // 1. Get all completed resources for this cluster
+    completedResources, err := c.listCompletedResourcesByCluster(clusterID)
     if err != nil {
         return err
     }
 
-    // 2. Clean up old generations (keep only current)
-    if err := c.cleanupOldGenerations(resources, currentGeneration); err != nil {
+    // 2. Always clean up old generations (keep only current)
+    if err := c.cleanupOldGenerations(completedResources, currentGeneration); err != nil {
         return err
     }
 
-    // 3. Clean up excess resources in current generation by count
-    if err := c.cleanupExcessResourcesInGeneration(resources[currentGeneration]); err != nil {
-        return err
-    }
-
-    // 4. Clean up resources by age
-    if err := c.cleanupResourcesByAge(resources); err != nil {
-        return err
-    }
-
-    // 5. Clean up failed resources (if configured)
-    if c.config.DeleteFailedResources {
-        if err := c.cleanupFailedResources(resources); err != nil {
-            return err
+    // 3. Keep only N completed resources (simple count-based cleanup)
+    if len(completedResources) > c.config.KeepCompleted {
+        excess := completedResources[c.config.KeepCompleted:]
+        for _, resource := range excess {
+            if err := c.k8sClient.Delete(ctx, resource); err != nil {
+                return err
+            }
         }
     }
 
@@ -1106,8 +1892,7 @@ resources:
     resourceManagement:
       updateStrategy: "versioned"  # Jobs are immutable
       cleanup:
-        retentionPolicy:
-          completedResourcesPerGeneration: 2
+        keepCompleted: 2            # Keep 2 transport jobs
     template: |
       apiVersion: batch/v1
       kind: Job
@@ -1208,8 +1993,8 @@ func (c *Controller) getOrCreateAllResources(cluster *Cluster) (map[string]*unst
 }
 
 func (c *Controller) getOrCreateResource(resourceConfig ResourceConfig, cluster *Cluster) (*unstructured.Unstructured, error) {
-    // Determine update strategy (per-resource or controller default)
-    strategy := c.determineUpdateStrategy(resourceConfig)
+    // Determine update strategy from per-resource configuration
+    strategy := c.determineUpdateStrategy(resourceConfig, resourceKind)
 
     if strategy == "versioned" {
         return c.getOrCreateVersionedResource(resourceConfig, cluster)
@@ -1269,21 +2054,19 @@ spec:
       operator: "eq"
       value: "gcp"
 
-  # Resource management - Jobs require versioned strategy
-  resourceManagement:
-    updateStrategy: "versioned"  # Required for Jobs (immutable resources)
-    cleanup:
-      retentionPolicy:
-        completedResourcesPerGeneration: 2
-        totalCompletedResources: 5
-        maxAge: "24h"
-      cleanupBehavior:
-        deleteFailedResources: true
-        preserveRunningResources: true
-
   resources:
     - name: "validation-job"
       description: "GCP environment validation job"
+      resourceManagement:
+        updateStrategy: "versioned"  # Required for Jobs (immutable resources)
+        cleanup:
+          keepCompleted: 3            # Keep 3 validation results
+          waitForCompletion: true     # Wait for validation to complete before starting new
+          completionTimeout: "600s"   # Max 10 minutes for validation to complete
+          completionDetection:
+            - field: "status.conditions[?(@.type=='Complete')].status"
+              operator: "eq"
+              value: "True"
       template: |
         apiVersion: batch/v1
         kind: Job
@@ -1331,9 +2114,9 @@ spec:
       message: "{{$complete := false}}{{$failed := false}}{{range .resources.validation-job.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}GCP environment validation {{if $complete}}passed{{else if $failed}}failed{{else}}is running{{end}}"
 ```
 
-### Example 2: Maestro gRPC HyperShift Cluster Creation
+### Example 2: Maestro HyperShift Cluster Creation with Direct API Integration
 
-This controller uses a two-resource approach with controller-side rendering:
+This controller uses the new Maestro target configuration for direct API integration:
 
 ```yaml
 apiVersion: cls.redhat.com/v1alpha1
@@ -1343,157 +2126,152 @@ metadata:
   namespace: cls-system
 spec:
   name: "maestro-hostedcluster"
-  description: "Creates HyperShift HostedClusters via Maestro gRPC"
-  # Only process HyperShift clusters with Maestro enabled
+  description: "Creates HyperShift HostedClusters via Maestro API with placement-driven targeting"
 
+  # Configure Maestro API target using placement decision data
+  target:
+    type: "maestro"
+    maestroConfig:
+      endpoint: "{{.cluster.status.maestroEndpoint}}"
+      consumer: "{{.cluster.status.assignedConsumer}}"
+
+  # Only process HyperShift clusters with placement decision data available
   preconditions:
     - field: "spec.infrastructure_type"
       operator: "eq"
       value: "hypershift"
-    - field: "spec.use_maestro"
+    - field: "spec.provider"
       operator: "eq"
-      value: true
+      value: "gcp"
+    - field: "status.assignedConsumer"
+      operator: "exists"
+    - field: "status.maestroEndpoint"
+      operator: "exists"
+    - field: "status.pullSecretName"
+      operator: "exists"
+    - field: "status.sshKeyName"
+      operator: "exists"
 
   resources:
-    - name: "rendered-hostedcluster"
-      description: "Rendered HostedCluster YAML for debugging and Maestro transport"
+    - name: "hosted-cluster"
+      description: "HyperShift HostedCluster resource created via Maestro"
       resourceManagement:
-        updateStrategy: "in_place"  # ConfigMaps are mutable
+        updateStrategy: "in_place"  # HostedCluster resources are mutable
       template: |
-        apiVersion: v1
-        kind: ConfigMap
+        apiVersion: hypershift.openshift.io/v1beta1
+        kind: HostedCluster
         metadata:
-          name: "hostedcluster-{{.cluster.name}}"
-          namespace: "cls-system"
+          name: "{{.cluster.name}}"
+          namespace: "{{.cluster.status.hostingNamespace | default "clusters"}}"
           labels:
-            cluster-id: "{{.cluster.id}}"
-            cluster-generation: "{{.cluster.generation}}"
-            controller: "maestro-hostedcluster"
-            resource-type: "rendered-hostedcluster"
-        data:
-          hostedcluster.yaml: |
-            apiVersion: hypershift.openshift.io/v1beta1
-            kind: HostedCluster
-            metadata:
-              name: "{{.cluster.name}}"
-              namespace: "{{.cluster.spec.hosting_cluster_namespace | default "clusters"}}"
-              labels:
-                cluster.x-k8s.io/cluster-name: "{{.cluster.name}}"
-                hypershift.openshift.io/hosted-cluster: "{{.cluster.name}}"
-              annotations:
-                cluster.open-cluster-management.io/managedcluster-name: "{{.cluster.name}}"
-            spec:
-              release:
-                image: "{{.cluster.spec.openshift_version}}"
-              pullSecret:
-                name: pull-secret
-              sshKey:
-                name: ssh-key
-              networking:
-                clusterNetwork:
-                - cidr: "{{.cluster.spec.cluster_cidr | default "10.132.0.0/14"}}"
-                serviceNetwork:
-                - cidr: "{{.cluster.spec.service_cidr | default "172.31.0.0/16"}}"
-                networkType: "{{.cluster.spec.network_type | default "OVNKubernetes"}}"
-              platform:
-                type: GCP
-                gcp:
-                  projectID: "{{.cluster.spec.gcp_project}}"
-                  region: "{{.cluster.spec.region}}"
-                  resourceTags:
-                  - key: "cluster-id"
-                    value: "{{.cluster.id}}"
-                  - key: "managed-by"
-                    value: "cls-backend"
-              infraID: "{{.cluster.name}}-{{substr 0 8 .cluster.id}}"
-              dns:
-                baseDomain: "{{.cluster.spec.base_domain}}"
-                privateZoneID: "{{.cluster.spec.private_zone_id}}"
-                publicZoneID: "{{.cluster.spec.public_zone_id}}"
-              services:
-              - service: APIServer
-                servicePublishingStrategy:
-                  type: LoadBalancer
-              - service: OAuthServer
-                servicePublishingStrategy:
-                  type: Route
-              - service: OIDC
-                servicePublishingStrategy:
-                  type: Route
-              - service: Konnectivity
-                servicePublishingStrategy:
-                  type: Route
-              - service: Ignition
-                servicePublishingStrategy:
-                  type: Route
-              autoscaling: {}
-    - name: "maestro-transport"
-      description: "Job to send rendered HostedCluster to Maestro"
-      resourceManagement:
-        updateStrategy: "versioned"  # Jobs are immutable
-        cleanup:
-          retentionPolicy:
-            completedResourcesPerGeneration: 3
-            totalCompletedResources: 10
-            maxAge: "72h"
-          cleanupBehavior:
-            deleteFailedResources: false  # Keep failed resources for debugging
-            preserveRunningResources: true
-      template: |
-        apiVersion: batch/v1
-        kind: Job
-        metadata:
-          name: "maestro-send-{{.cluster.id}}-gen-{{.cluster.generation}}-{{.timestamp}}"
-          namespace: "cls-system"
-          labels:
-            cluster-id: "{{.cluster.id}}"
-            cluster-generation: "{{.cluster.generation}}"
-            controller: "maestro-hostedcluster"
-            resource-type: "maestro-transport"
+            cluster.x-k8s.io/cluster-name: "{{.cluster.name}}"
+            hypershift.openshift.io/hosted-cluster: "{{.cluster.name}}"
+            cls-cluster-id: "{{.cluster.id}}"
+          annotations:
+            cluster.open-cluster-management.io/managedcluster-name: "{{.cluster.name}}"
+            cls.redhat.com/cluster-generation: "{{.cluster.generation}}"
         spec:
-          template:
-            spec:
-              containers:
-              - name: maestro-client
-                image: "gcr.io/my-project/maestro-client:latest"
-                env:
-                - name: CLUSTER_ID
-                  value: "{{.cluster.id}}"
-                - name: CLUSTER_NAME
-                  value: "{{.cluster.name}}"
-                - name: HOSTING_CLUSTER_ID
-                  value: "{{.cluster.spec.hosting_cluster_id}}"
-                - name: MAESTRO_GRPC_URL
-                  value: "maestro-grpc.maestro-system.svc.cluster.local:8090"
-                command: ["/bin/maestro-client", "create-resource", "--file", "/etc/rendered/hostedcluster.yaml"]
-                volumeMounts:
-                - name: maestro-certs
-                  mountPath: /etc/maestro/certs
-                  readOnly: true
-                - name: rendered-hostedcluster
-                  mountPath: /etc/rendered
-                  readOnly: true
-              volumes:
-              - name: maestro-certs
-                secret:
-                  secretName: maestro-client-certs
-              - name: rendered-hostedcluster
-                configMap:
-                  name: "hostedcluster-{{.cluster.name}}"
-              restartPolicy: Never
-          backoffLimit: 3
-          activeDeadlineSeconds: 1800
+          release:
+            image: "{{.cluster.spec.openshift_version}}"
+          pullSecret:
+            name: "{{.cluster.status.pullSecretName}}"
+          sshKey:
+            name: "{{.cluster.status.sshKeyName}}"
+          networking:
+            clusterNetwork:
+            - cidr: "{{.cluster.spec.cluster_cidr | default "10.132.0.0/14"}}"
+            serviceNetwork:
+            - cidr: "{{.cluster.spec.service_cidr | default "172.31.0.0/16"}}"
+            networkType: "{{.cluster.spec.network_type | default "OVNKubernetes"}}"
+          platform:
+            type: GCP
+            gcp:
+              projectID: "{{.cluster.spec.gcp_project}}"
+              region: "{{.cluster.spec.region}}"
+              resourceTags:
+              - key: "cluster-id"
+                value: "{{.cluster.id}}"
+              - key: "managed-by"
+                value: "cls-backend"
+              - key: "hosting-cluster"
+                value: "{{.cluster.status.hostingCluster}}"
+          infraID: "{{.cluster.name}}-{{substr 0 8 .cluster.id}}"
+          dns:
+            baseDomain: "{{.cluster.spec.base_domain}}"
+            privateZoneID: "{{.cluster.status.privateZoneID}}"
+            publicZoneID: "{{.cluster.status.publicZoneID}}"
+          services:
+          - service: APIServer
+            servicePublishingStrategy:
+              type: LoadBalancer
+          - service: OAuthServer
+            servicePublishingStrategy:
+              type: Route
+          - service: OIDC
+            servicePublishingStrategy:
+              type: Route
+          - service: Konnectivity
+            servicePublishingStrategy:
+              type: Route
+          - service: Ignition
+            servicePublishingStrategy:
+              type: Route
+          autoscaling: {}
 
   statusConditions:
     - name: "Applied"
-      status: "{{if and .resources.rendered-hostedcluster .resources.maestro-transport}}True{{else}}False{{end}}"
-      reason: "ResourcesCreated"
-      message: "ConfigMap and Maestro transport job created for cluster {{.cluster.name}}"
+      status: "True"
+      reason: "HostedClusterCreated"
+      message: "HostedCluster {{.cluster.name}} has been created via Maestro to {{.cluster.status.hostingCluster}}"
+
     - name: "Available"
-      status: "{{$complete := false}}{{$failed := false}}{{range .resources.maestro-transport.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}{{if $complete}}True{{else if $failed}}False{{else}}Unknown{{end}}"
-      reason: "{{$complete := false}}{{$failed := false}}{{range .resources.maestro-transport.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}{{if $complete}}MaestroSendSucceeded{{else if $failed}}MaestroSendFailed{{else}}MaestroSendInProgress{{end}}"
-      message: "{{$complete := false}}{{$failed := false}}{{range .resources.maestro-transport.status.conditions}}{{if eq .type \"Complete\"}}{{if eq .status \"True\"}}{{$complete = true}}{{end}}{{end}}{{if eq .type \"Failed\"}}{{if eq .status \"True\"}}{{$failed = true}}{{end}}{{end}}{{end}}Maestro transport {{if $complete}}completed successfully{{else if $failed}}failed{{else}}is in progress{{end}}"
+      status: "{{if .resources.hosted-cluster.status.conditions}}{{$available := \"Unknown\"}}{{range .resources.hosted-cluster.status.conditions}}{{if eq .type \"Available\"}}{{$available = .status}}{{end}}{{end}}{{$available}}{{else}}Unknown{{end}}"
+      reason: "{{if .resources.hosted-cluster.status.conditions}}{{$reason := \"ClusterProvisioning\"}}{{range .resources.hosted-cluster.status.conditions}}{{if eq .type \"Available\"}}{{if eq .status \"True\"}}{{$reason = \"ClusterAvailable\"}}{{else}}{{$reason = \"ClusterNotAvailable\"}}{{end}}{{end}}{{end}}{{$reason}}{{else}}ClusterProvisioning{{end}}"
+      message: "HostedCluster {{.cluster.name}} {{if .resources.hosted-cluster.status.conditions}}{{$message := \"is being provisioned\"}}{{range .resources.hosted-cluster.status.conditions}}{{if eq .type \"Available\"}}{{if eq .status \"True\"}}{{$message = \"is available and ready\"}}{{else}}{{$message = printf \"is not available: %s\" .message}}{{end}}{{end}}{{end}}{{$message}}{{else}}is being provisioned - check resource status for details{{end}}"
+
+    - name: "Healthy"
+      status: "{{if .resources.hosted-cluster.status.observedGeneration}}{{if eq .resources.hosted-cluster.metadata.generation .resources.hosted-cluster.status.observedGeneration}}True{{else}}False{{end}}{{else}}Unknown{{end}}"
+      reason: "{{if .resources.hosted-cluster.status.observedGeneration}}{{if eq .resources.hosted-cluster.metadata.generation .resources.hosted-cluster.status.observedGeneration}}HostedClusterSynced{{else}}HostedClusterOutOfSync{{end}}{{else}}HostedClusterSyncPending{{end}}"
+      message: "HostedCluster {{.cluster.name}} {{if .resources.hosted-cluster.status.observedGeneration}}{{if eq .resources.hosted-cluster.metadata.generation .resources.hosted-cluster.status.observedGeneration}}is in sync with desired state{{else}}is being updated to match desired state{{end}}{{else}}sync status is unknown{{end}}"
 ```
+
+#### Expected Cluster Specification with Placement Data
+
+```json
+{
+  "id": "cluster-789",
+  "name": "production-west",
+  "generation": 15,
+  "spec": {
+    "provider": "gcp",
+    "infrastructure_type": "hypershift",
+    "gcp_project": "my-gcp-project",
+    "base_domain": "example.com",
+    "openshift_version": "quay.io/openshift-release-dev/ocp-release:4.14.0",
+    "cluster_cidr": "10.132.0.0/14",
+    "service_cidr": "172.31.0.0/16",
+    "network_type": "OVNKubernetes"
+  },
+  "status": {
+    "assignedConsumer": "consumer-west-001",
+    "maestroEndpoint": "maestro-west.example.com:443",
+    "hostingCluster": "management-west-gcp",
+    "hostingNamespace": "clusters-west",
+    "pullSecretName": "production-west-pull-secret",
+    "sshKeyName": "production-west-ssh-key",
+    "privateZoneID": "projects/my-gcp-project/managedZones/private-zone-west",
+    "publicZoneID": "projects/my-gcp-project/managedZones/public-zone-west"
+  }
+}
+```
+
+This example demonstrates:
+- **Direct Maestro Integration**: No intermediate Jobs or ConfigMaps - resources created directly via Maestro API
+- **Placement-Driven Configuration**: Maestro endpoint and consumer come from placement controller decisions
+- **Dependency Management**: Uses preconditions to ensure all required placement data exists
+- **Resource References**: Pull secrets, SSH keys, and DNS zones provided by other controllers via cluster status
+- **Unified Status Interface**: Same `.resources.hosted-cluster.status` access pattern regardless of target type
+- **Template-Driven Endpoints**: Maestro configuration uses cluster status fields populated by placement decisions
 
 ### Example 3: HyperShift DNS Sub-Zone Management with Config Connector
 
@@ -1521,14 +2299,11 @@ spec:
     - field: "spec.parent_dns_zone"
       operator: "exists"
 
-  # Config Connector resources are mutable - use in-place updates
-  resourceManagement:
-    updateStrategy: "in_place"
-    # No cleanup needed - single DNS sub-zone per cluster
-
   resources:
     - name: "dns-subzone"
       description: "Delegated DNS sub-zone for HyperShift cluster"
+      resourceManagement:
+        updateStrategy: "in_place"  # Config Connector resources are mutable
       template: |
         apiVersion: dns.cnrm.cloud.google.com/v1beta1
         kind: DNSManagedZone
@@ -1599,23 +2374,191 @@ This example demonstrates:
 
 ## 7. Implementation Plan
 
-### Phase 1: Core Framework
-1. **CRD Definition**: Create simple ControllerConfig CRD
-2. **Basic Controller**: Event handling, CRD loading, template compilation
-3. **SDK Integration**: Use cls-controller-sdk for Pub/Sub and API calls
-4. **Resource Creation**: Render and create any Kubernetes resource from templates
+### Phase 1: Foundation and Core Framework (Sprint 1-3)
 
-### Phase 2: Status and Testing
-1. **Status Reporting**: Read resource status and report via cls-backend API
-2. **Template Functions**: Basic Go template functions (join, split, etc.)
-3. **Unit Tests**: Test template rendering and event handling
-4. **Integration Tests**: End-to-end testing with test clusters
+#### 1.1 CRD and Schema Definition
+- **ControllerConfig CRD**: Implement complete CRD with all fields from design
+  - Basic resource template configuration
+  - Preconditions array with field/operator/value syntax
+  - Target configuration (kube-api, maestro)
+  - Resource management strategies (in_place, versioned)
+  - Status conditions template configuration
+  - Cleanup policies for versioned resources
+- **CRD Validation**: OpenAPI v3 schema validation for all fields
+- **CRD Installation**: Helm chart or kustomize for CRD deployment
 
-### Phase 3: Production
-1. **Examples**: Create real ControllerConfig examples for Jobs, Deployments, ConfigMaps
-2. **Documentation**: Usage guide and migration instructions
-3. **RBAC**: Generate ClusterRole from resource templates
-4. **Deployment**: Create deployment manifests
+#### 1.2 Core Controller Engine
+- **Event Processing Loop**: Handle cluster events (created/updated/deleted/reconcile)
+- **Configuration Loading**: Load and validate ControllerConfig from Kubernetes API
+- **Template Compilation**: Pre-compile Go templates at startup with error handling
+- **Graceful Startup/Shutdown**: Proper lifecycle management with health checks
+
+#### 1.3 cls-controller-sdk Integration
+- **Pub/Sub Client**: Subscribe to cluster events with configurable subscriptions
+- **API Client**: cls-backend REST API integration for cluster specs and status reporting
+- **Error Handling**: Retry logic, circuit breakers, and failure recovery
+- **Metrics Integration**: Basic Prometheus metrics for event processing
+
+### Phase 2: Resource Management and Strategies (Sprint 4-6)
+
+#### 2.1 Precondition System
+- **Field Evaluation Engine**: Support nested field paths (e.g., `spec.provider`, `status.assignedConsumer`)
+- **Operator Implementation**: All operators (`eq`, `ne`, `in`, `notin`, `exists`, `notexists`)
+- **JSONPath Support**: Complex field access like `status.conditions[?(@.type=='Ready')].status`
+- **Precondition Failure Reporting**: Clear status reporting when preconditions fail
+
+#### 2.2 Template System and Security
+- **Go Template Engine**: Standard Go template processing with security restrictions
+- **Template Functions**: Core functions (`join`, `split`, `replace`, `trim`, `lower`, `upper`)
+- **Advanced Functions**: `randomString`, `substr`, `toJson`, `fromJson`, `base64encode`, `base64decode`
+- **Template Context**: Provide `.cluster`, `.resources`, `.controller`, `.timestamp` context
+- **Security Model**: Sandboxed template execution with restricted function set
+
+#### 2.3 Resource Update Strategies
+- **Strategy Detection**: Automatic strategy selection based on resource kind (Jobs = versioned)
+- **In-Place Strategy**: Update existing mutable resources efficiently
+- **Versioned Strategy**: Create new resources with generation + timestamp naming
+- **Strategy Configuration**: Per-resource strategy override in ControllerConfig
+
+### Phase 3: Advanced Features and Client Management (Sprint 7-9)
+
+#### 3.1 Multi-Target Client System
+- **Client Manager**: Unified interface for different target types
+- **Local Kubernetes Client**: Default local cluster API access
+- **Remote Kubernetes Client**: Kubeconfig-based remote cluster access with caching
+- **Maestro gRPC Client**: Direct Maestro API integration with connection pooling
+- **Client Selection Logic**: Automatic client selection based on target configuration
+
+#### 3.2 Resource Lifecycle Management
+- **Resource Creation**: Template rendering and Kubernetes resource creation
+- **Resource Updates**: Handle spec changes for in-place strategy
+- **Resource Retrieval**: Get current resource status for status reporting
+- **Multi-Resource Support**: Handle multiple resources per controller with dependency tracking
+
+#### 3.3 Completion Detection and Cleanup
+- **Completion Detection Engine**: Unified field evaluation for resource completion
+- **Cleanup Policies**: Configurable retention policies for versioned resources
+- **Wait for Completion**: Optional blocking on old generation completion
+- **Timeout Handling**: Force cleanup after completion timeout expires
+- **Generation Tracking**: Proper generation transition handling
+
+### Phase 4: Status Reporting and Observability (Sprint 10-11)
+
+#### 4.1 Two-Layer Status Reporting
+- **Controller Conditions**: Interpreted status (Applied, Available, Healthy)
+- **Raw Resource Status**: Complete `.status` field from Kubernetes resources
+- **Template-Based Conditions**: Dynamic status condition evaluation using templates
+- **Generation Tracking**: Proper observedGeneration reporting
+
+#### 4.2 Waiting States and Error Handling
+- **Waiting Status**: Clear reporting during completion waits with timeout tracking
+- **Error Status**: Detailed error reporting for template failures, API errors, etc.
+- **Precondition Failures**: Informative status when preconditions aren't met
+- **Resource Conflicts**: Handle resource creation conflicts and naming issues
+
+#### 4.3 Observability and Monitoring
+- **Prometheus Metrics**: Controller performance, resource creation success/failure rates
+- **Structured Logging**: JSON logging with correlation IDs and cluster context
+- **Health Endpoints**: Kubernetes readiness/liveness probes
+- **Debug Information**: Resource status dumps and template rendering debug
+
+### Phase 5: Testing and Validation (Sprint 12-13)
+
+#### 5.1 Unit Testing
+- **Template Rendering Tests**: All template functions and security boundaries
+- **Precondition Evaluation**: All operators and field access patterns
+- **Resource Strategy Tests**: Both in-place and versioned strategies
+- **Client Manager Tests**: Mock clients for all target types
+- **Status Reporting Tests**: Condition evaluation and report generation
+
+#### 5.2 Integration Testing
+- **End-to-End Tests**: Full workflow with test clusters and mock cls-backend
+- **Multi-Resource Scenarios**: Controllers with multiple resources and dependencies
+- **Error Scenarios**: Network failures, API errors, timeout conditions
+- **Target Type Tests**: Local Kubernetes, remote Kubernetes, and Maestro targets
+
+#### 5.3 Example Controllers
+- **GCP Validation Job**: Complete implementation with versioned strategy
+- **DNS Sub-Zone Management**: Config Connector integration with in-place strategy
+- **Maestro HyperShift**: Multi-resource controller with ConfigMap + Job
+- **Direct Maestro Integration**: HostedCluster creation via Maestro API
+
+### Phase 6: Production Readiness (Sprint 14-15)
+
+#### 6.1 Security and RBAC
+- **Container Security**: runAsNonRoot, readOnlyRootFilesystem, dropped capabilities
+- **RBAC Generation**: Automatic ClusterRole generation from resource templates
+- **Secret Management**: Secure handling of kubeconfig secrets and service account keys
+- **Network Policies**: Optional network isolation for controller pods
+
+#### 6.2 Deployment and Operations
+- **Helm Charts**: Production-ready Helm chart with configurable values
+- **Kustomize Base**: Alternative kustomize deployment option
+- **Multi-Controller Deployment**: Support for multiple controller instances
+- **Resource Management**: Memory and CPU limits, PodDisruptionBudget
+
+#### 6.3 Documentation and Migration
+- **Usage Guide**: Complete guide for creating ControllerConfig resources
+- **Template Reference**: Documentation for all available template functions
+- **Migration Guide**: Migration from existing controllers to generalized controller
+- **Troubleshooting Guide**: Common issues and debugging procedures
+
+### Phase 7: Advanced Features and Optimization (Sprint 16+)
+
+#### 7.1 Performance Optimization
+- **Resource Caching**: Intelligent caching of Kubernetes resources
+- **Batch Processing**: Batch multiple events for efficiency
+- **Connection Pooling**: Optimize client connections and reuse
+- **Memory Management**: Efficient template and resource management
+
+#### 7.2 Advanced Template Features
+- **Custom Functions**: Extensible template function system
+- **Template Validation**: Pre-deployment template validation
+- **Template Debugging**: Enhanced debugging tools for template development
+- **Template Libraries**: Reusable template components
+
+#### 7.3 Enhanced Observability
+- **Distributed Tracing**: OpenTelemetry integration for request tracing
+- **Advanced Metrics**: Detailed performance and business metrics
+- **Alerting Integration**: PagerDuty/Slack integration for critical failures
+- **Dashboard Templates**: Grafana dashboards for controller monitoring
+
+### Acceptance Criteria
+
+#### Phase 1-3 (MVP)
+- [ ] ControllerConfig CRD deployed and validated
+- [ ] Basic controller handles cluster events and creates simple Job resources
+- [ ] Template rendering works with basic functions
+- [ ] Preconditions prevent resource creation when conditions not met
+- [ ] Status reporting works for simple scenarios
+
+#### Phase 4-6 (Production Ready)
+- [ ] All update strategies (in-place, versioned) work correctly
+- [ ] Multi-target support (local, remote, maestro) implemented
+- [ ] Cleanup policies work for versioned resources
+- [ ] Two-layer status reporting provides complete visibility
+- [ ] Security model implemented and tested
+- [ ] Production deployment ready with RBAC and monitoring
+
+#### Phase 7+ (Advanced)
+- [ ] Performance optimizations reduce resource usage by 50%
+- [ ] Advanced template features enable complex use cases
+- [ ] Complete observability stack provides operational insights
+- [ ] Migration from existing controllers completed successfully
+
+### Dependencies and Risks
+
+#### External Dependencies
+- **cls-controller-sdk**: Core SDK for Pub/Sub and API integration
+- **cls-backend API**: Cluster specification and status reporting endpoints
+- **Maestro API**: gRPC client for direct Maestro integration
+- **Config Connector**: For GCP resource management examples
+
+#### Risk Mitigation
+- **Template Security**: Comprehensive security review of template execution
+- **Resource Conflicts**: Robust handling of naming conflicts and race conditions
+- **API Compatibility**: Backward compatibility strategy for CRD schema changes
+- **Performance**: Load testing with realistic cluster counts and event volumes
 
 ## 8. Benefits
 
