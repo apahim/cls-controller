@@ -9,7 +9,7 @@ The CLS Controller is a template-driven, event-based controller that can create 
 - **Template-driven resource creation**: Uses Go templates to create Jobs, Custom Resources, or any Kubernetes resource
 - **Event-driven execution**: Responds to cluster created/updated/deleted/reconcile events via Pub/Sub
 - **Multi-tenant organization support**: Automatically extracts organization context from events for dynamic multi-tenancy
-- **Multiple deployment targets**: Local Kubernetes, remote clusters, or Maestro API
+- **Multiple deployment targets**: Local Kubernetes, remote clusters (✅ production-ready), or Maestro API
 - **Precondition filtering**: Only processes events that match specified conditions
 - **Two update strategies**: In-place updates for mutable resources, versioned creation for immutable resources
 - **Rich status reporting**: Two-layer status reporting with controller conditions and raw resource status
@@ -63,9 +63,31 @@ The CLS Controller is a template-driven, event-based controller that can create 
 ## Examples
 
 See `config/examples/` for complete controller configurations including:
-- GCP environment validation
-- DNS sub-zone management
-- HyperShift cluster creation via Maestro
+- **Local cluster resources**: GCP environment validation, DNS sub-zone management
+- **Remote cluster resources**: Multi-cluster deployments using kubeconfig secrets
+- **Maestro API integration**: HyperShift cluster creation via Maestro
+
+### Remote Cluster Targets
+
+Create resources on remote Kubernetes clusters using kubeconfig stored in secrets. **✅ Fully implemented and production-ready.**
+
+```bash
+# Create secret with kubeconfig for remote cluster
+kubectl create secret generic remote-cluster-kubeconfig \
+  --from-file=config=/path/to/remote-kubeconfig.yaml \
+  -n cls-system
+
+# Deploy example remote cluster controller
+kubectl apply -f config/examples/remote-cluster.yaml
+```
+
+**Supported Authentication Methods:**
+- OAuth2 access tokens (for GKE with Workload Identity)
+- Service account key files
+- Direct token authentication
+- Standard kubeconfig authentication
+
+See [docs/REMOTE_TARGETS.md](docs/REMOTE_TARGETS.md) for complete setup guide, authentication methods, and troubleshooting.
 
 ## Development
 

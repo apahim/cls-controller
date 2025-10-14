@@ -112,6 +112,9 @@ func (c *Controller) Reconcile(ctx context.Context, req reconcile.Request) (reco
 	// Store the valid configuration
 	c.controllerConfig = &controllerConfig
 
+	// Update client manager with the namespace where secrets should be read from
+	c.clientManager.SetSecretNamespace(controllerConfig.GetNamespace())
+
 	// Compile templates
 	if err := c.templateEngine.CompileTemplates(&controllerConfig); err != nil {
 		log.Error("Failed to compile templates", zap.Error(err))

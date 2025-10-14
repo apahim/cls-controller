@@ -8,7 +8,9 @@ import (
 	"github.com/apahim/cls-controller/internal/crd"
 	controllersdk "github.com/apahim/controller-sdk"
 	"go.uber.org/zap"
+	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
+	"k8s.io/apimachinery/pkg/types"
 	"k8s.io/client-go/tools/clientcmd"
 	ctrlclient "sigs.k8s.io/controller-runtime/pkg/client"
 )
@@ -24,23 +26,33 @@ type ResourceClient interface {
 
 // Manager manages different types of resource clients
 type Manager struct {
-	localClient    ctrlclient.Client
-	remoteClients  map[string]ctrlclient.Client // cached remote clients by secret key
-	maestroClients map[string]*MaestroClient    // cached Maestro clients by endpoint/consumer
-	secretClient   ctrlclient.Client            // client for reading secrets
-	logger         *zap.Logger
-	mu             sync.RWMutex
+	localClient     ctrlclient.Client
+	remoteClients   map[string]ctrlclient.Client // cached remote clients by secret key
+	maestroClients  map[string]*MaestroClient    // cached Maestro clients by endpoint/consumer
+	secretClient    ctrlclient.Client            // client for reading secrets
+	secretNamespace string                        // namespace to read secrets from (same as ControllerConfig)
+	logger          *zap.Logger
+	mu              sync.RWMutex
 }
 
 // NewManager creates a new client manager
 func NewManager(localClient ctrlclient.Client, logger *zap.Logger) (*Manager, error) {
 	return &Manager{
-		localClient:    localClient,
-		remoteClients:  make(map[string]ctrlclient.Client),
-		maestroClients: make(map[string]*MaestroClient),
-		secretClient:   localClient, // Use local client to read secrets
-		logger:         logger.Named("client-manager"),
+		localClient:     localClient,
+		remoteClients:   make(map[string]ctrlclient.Client),
+		maestroClients:  make(map[string]*MaestroClient),
+		secretClient:    localClient, // Use local client to read secrets
+		secretNamespace: "cls-system", // Default namespace, will be updated when ControllerConfig is loaded
+		logger:          logger.Named("client-manager"),
 	}, nil
+}
+
+// SetSecretNamespace updates the namespace used for reading kubeconfig secrets
+func (m *Manager) SetSecretNamespace(namespace string) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.secretNamespace = namespace
+	m.logger.Debug("Updated secret namespace", zap.String("namespace", namespace))
 }
 
 // GetClient returns the appropriate client based on target configuration
@@ -106,9 +118,46 @@ func (m *Manager) getMaestroClient(ctx context.Context, target *crd.TargetConfig
 
 // getKubeConfigFromSecret reads kubeconfig from a secret
 func (m *Manager) getKubeConfigFromSecret(ctx context.Context, secretRef crd.SecretReference) ([]byte, error) {
-	// TODO: Implement secret reading
-	// This would read the secret and extract the kubeconfig data
-	return nil, fmt.Errorf("secret reading not implemented yet")
+	m.mu.RLock()
+	namespace := m.secretNamespace
+	m.mu.RUnlock()
+
+	// Create a secret object to fetch
+	secret := &corev1.Secret{}
+	secretKey := types.NamespacedName{
+		Name:      secretRef.Name,
+		Namespace: namespace,
+	}
+
+	// Fetch the secret
+	if err := m.secretClient.Get(ctx, secretKey, secret); err != nil {
+		return nil, fmt.Errorf("failed to get secret %s/%s: %w", namespace, secretRef.Name, err)
+	}
+
+	// Extract kubeconfig data from the specified key
+	kubeconfigData, exists := secret.Data[secretRef.Key]
+	if !exists {
+		return nil, fmt.Errorf("key %s not found in secret %s/%s", secretRef.Key, namespace, secretRef.Name)
+	}
+
+	if len(kubeconfigData) == 0 {
+		return nil, fmt.Errorf("kubeconfig data is empty in secret %s/%s key %s", namespace, secretRef.Name, secretRef.Key)
+	}
+
+	// Validate that the kubeconfig can be parsed
+	_, err := clientcmd.RESTConfigFromKubeConfig(kubeconfigData)
+	if err != nil {
+		return nil, fmt.Errorf("invalid kubeconfig in secret %s/%s key %s: %w", namespace, secretRef.Name, secretRef.Key, err)
+	}
+
+	m.logger.Debug("Successfully read and validated kubeconfig from secret",
+		zap.String("secret_name", secretRef.Name),
+		zap.String("secret_key", secretRef.Key),
+		zap.String("namespace", namespace),
+		zap.Int("kubeconfig_size", len(kubeconfigData)),
+	)
+
+	return kubeconfigData, nil
 }
 
 // createRemoteClient creates a Kubernetes client from kubeconfig data

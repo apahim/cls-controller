@@ -1,0 +1,119 @@
+# Example: Remote Cluster Management
+# This ControllerConfig creates resources on a remote Kubernetes cluster using a kubeconfig stored in a secret.
+apiVersion: cls.redhat.com/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: remote-cluster-management
+  namespace: cls-system
+spec:
+  name: "remote-cluster-management"
+  description: "Creates resources on remote clusters using kubeconfig from secrets"
+
+  # Configure remote kube-api target
+  target:
+    type: "kube-api"
+    kubeConfig:
+      secretRef:
+        name: "shard01"                  # Secret name in cls-system namespace
+        key: "config"                    # Key within the secret containing the kubeconfig
+
+  resources:
+    - name: "remote-namespace"
+      description: "Create a dedicated namespace on the remote cluster"
+      resourceManagement:
+        updateStrategy: "in_place"  # Namespaces are mutable
+      template: |
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: "{{.cluster.name}}-workloads"
+          labels:
+            cluster-id: "{{.cluster.id}}"
+            cluster-generation: "{{.cluster.generation}}"
+            managed-by: "cls-controller"
+            remote-target: "true"
+
+    - name: "remote-configmap"
+      description: "Create a configuration configmap on the remote cluster"
+      resourceManagement:
+        updateStrategy: "in_place"  # ConfigMaps are mutable
+      template: |
+        apiVersion: v1
+        kind: ConfigMap
+        metadata:
+          name: "{{.cluster.name}}-config"
+          namespace: "{{.cluster.name}}-workloads"
+          labels:
+            cluster-id: "{{.cluster.id}}"
+            cluster-generation: "{{.cluster.generation}}"
+        data:
+          cluster.yaml: |
+            cluster:
+              id: "{{.cluster.id}}"
+              name: "{{.cluster.name}}"
+              generation: {{.cluster.generation}}
+              organization: "{{.cluster.organization_domain}}"
+              provider: "{{.cluster.spec.provider}}"
+              region: "{{.cluster.spec.region}}"
+              created_by: "cls-controller"
+              created_at: "{{.timestamp}}"
+
+    - name: "remote-deployment"
+      description: "Create a sample deployment on the remote cluster"
+      resourceManagement:
+        updateStrategy: "in_place"  # Deployments are mutable
+      template: |
+        apiVersion: apps/v1
+        kind: Deployment
+        metadata:
+          name: "{{.cluster.name}}-workload"
+          namespace: "{{.cluster.name}}-workloads"
+          labels:
+            cluster-id: "{{.cluster.id}}"
+            cluster-generation: "{{.cluster.generation}}"
+            app: "{{.cluster.name}}-workload"
+        spec:
+          replicas: 1
+          selector:
+            matchLabels:
+              app: "{{.cluster.name}}-workload"
+          template:
+            metadata:
+              labels:
+                app: "{{.cluster.name}}-workload"
+                cluster-id: "{{.cluster.id}}"
+            spec:
+              containers:
+              - name: workload
+                image: nginx:alpine
+                ports:
+                - containerPort: 80
+                env:
+                - name: CLUSTER_ID
+                  value: "{{.cluster.id}}"
+                - name: CLUSTER_NAME
+                  value: "{{.cluster.name}}"
+                volumeMounts:
+                - name: config
+                  mountPath: /etc/cluster-config
+                  readOnly: true
+              volumes:
+              - name: config
+                configMap:
+                  name: "{{.cluster.name}}-config"
+
+  statusConditions:
+    - name: "Applied"
+      status: "True"
+      reason: "RemoteResourcesCreated"
+      message: "Created remote cluster resources successfully"
+
+    - name: "Available"
+      status: "True"
+      reason: "DeploymentReady"
+      message: "Remote deployment is available"
+
+    - name: "Healthy"
+      status: "True"
+      reason: "AllReplicasReady"
+      message: "All replicas are healthy"
