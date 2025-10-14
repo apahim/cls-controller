@@ -7,13 +7,34 @@ Create a generalized, configurable controller that can create Kubernetes resourc
 
 **Event-Driven Execution**: The controller uses Pub/Sub for lightweight event notifications (cluster created, updated, deleted, reconcile). Events trigger immediate action execution.
 
-**API-Based Data Transfer**: All cluster specifications and status updates happen via the cls-backend REST API. The controller fetches cluster specs on-demand and reports status back.
+**API-Based Data Transfer**: All cluster specifications and status updates happen via the cls-backend REST API. The controller fetches cluster specs on-demand using organization context from events and reports status back using organization-aware APIs.
 
 **Template-Driven Resources**: The controller uses Go templates to create either Jobs (for direct work) or Custom Resources (to trigger existing operators like CAPG, CAPI, etc.).
 
 **CRD-Based Configuration**: Controller configurations are defined using a simple CRD that gets loaded once at startup.
 
 **Simple and Secure**: Basic container security and K8s RBAC provide sufficient isolation.
+
+### Multi-Tenant Organization Support
+
+**Organization from Events**: The controller extracts organization context dynamically from incoming Pub/Sub cluster events rather than using hard-coded configuration. Each cluster event includes an `organization_domain` field that provides the organization context for API calls.
+
+**Event-Driven Organization Resolution**:
+- Cluster events contain `organization_domain` field (e.g., "redhat.com")
+- Controller uses this organization context for cls-backend API calls
+- No organization configuration required in controller deployment
+- Supports multiple organizations automatically
+
+**API Integration**: The controller uses organization-aware cls-backend APIs:
+- `GET /organizations/{org_id}/clusters/{cluster_id}` - Fetch cluster specs
+- `POST /organizations/{org_id}/clusters/{cluster_id}/status` - Report status
+- Organization ID derived from organization domain using kebab-case conversion
+
+This approach enables:
+- **Dynamic multi-tenancy**: Same controller handles multiple organizations
+- **No hard-coded configuration**: Organization comes from event data
+- **Simplified deployment**: No organization-specific environment variables needed
+- **Automatic scaling**: New organizations supported without controller changes
 
 ## 1. Simple Security Model
 
@@ -146,39 +167,20 @@ spec:
                         updateStrategy:
                           type: string
                           enum: ["in_place", "versioned"]
+                          default: "in_place"
                           description: "How to handle resource updates"
-                        cleanup:
-                          type: object
-                          description: "Simple cleanup policies (only applies when updateStrategy is 'versioned')"
-                          properties:
-                            keepCompleted:
-                              type: integer
-                              default: 2
-                              description: "Number of completed resources to keep (total across all generations)"
-                            waitForCompletion:
-                              type: boolean
-                              default: false
-                              description: "Wait for old generation resources to complete before creating new ones"
-                            completionTimeout:
-                              type: string
-                              default: "300s"
-                              description: "Maximum time to wait for completion (only used if waitForCompletion is true)"
-                            completionDetection:
-                              type: array
-                              description: "How to detect if a resource has completed (required if waitForCompletion is true)"
-                              items:
-                                type: object
-                                required: ["field", "operator", "value"]
-                                properties:
-                                  field:
-                                    type: string
-                                    description: "Resource field path (e.g., 'status.phase', 'status.conditions[?(@.type==Complete)].status')"
-                                  operator:
-                                    type: string
-                                    enum: ["eq", "ne", "in", "notin", "exists", "notexists"]
-                                    description: "Comparison operator"
-                                  value:
-                                    description: "Value to compare against (string, array for in/notin, omit for exists/notexists)"
+                        versionInterval:
+                          type: string
+                          default: "5m"
+                          description: "Minimum time between creating new versions (only applies when updateStrategy is 'versioned'). New versions are only created if this interval has elapsed since the last version, unless generation changes"
+                        newGenerationOnly:
+                          type: boolean
+                          default: false
+                          description: "When set to true ensures new versioned resources are only created when the cluster generation changes, ignoring the versionInterval time-based constraint"
+                        keepVersions:
+                          type: integer
+                          default: 2
+                          description: "Number of completed versions to keep for versioned resources. Older completed versions beyond this count will be deleted automatically"
 
               # Multiple status conditions to report based on resource status
               statusConditions:
@@ -220,13 +222,14 @@ spec:
 ## 3. How It Works
 
 ### Simple Event Processing Flow
-1. **Event Received**: Controller gets cluster event (created/updated/deleted/reconcile)
-2. **Fetch Cluster Spec**: Get current cluster spec from cls-backend API (includes generation)
-3. **Precondition Check**: Evaluate optional preconditions against cluster spec
-4. **Status Reporting**: Always report status, even if preconditions fail
-5. **Resource Creation**: Render and create Kubernetes resource from template (if preconditions pass)
-6. **Status Check**: Read current resource status
-7. **Report Status**: Send current status back to cls-backend with observedGeneration
+1. **Event Received**: Controller gets cluster event (created/updated/deleted/reconcile) with organization_domain
+2. **Organization Extraction**: Extract organization context from event for multi-tenant API calls
+3. **Fetch Cluster Spec**: Get current cluster spec from cls-backend API using organization context (includes generation)
+4. **Precondition Check**: Evaluate optional preconditions against cluster spec
+5. **Status Reporting**: Always report status using organization-aware APIs, even if preconditions fail
+6. **Resource Creation**: Render and create Kubernetes resource from template (if preconditions pass)
+7. **Status Check**: Read current resource status
+8. **Report Status**: Send current status back to cls-backend with observedGeneration using organization context
 
 ### Precondition Failure Handling
 
@@ -263,6 +266,7 @@ func (c *Controller) reportPreconditionFailure(cluster *Cluster) error {
 {
   "id": "cluster-456",
   "name": "development-cluster",
+  "organization_domain": "example.com",
   "generation": 10,
   "spec": {
     "provider": "aws",  // Not GCP
@@ -423,7 +427,7 @@ All status reports must include the `observedGeneration` from the cluster spec t
 ### Available Template Context
 Templates have access to:
 - `.resources` - Map of all created Kubernetes resources with their current status (e.g., `.resources.dns-subzone`, `.resources.maestro-transport`)
-- `.cluster` - The original cluster spec from cls-backend (includes `.generation`)
+- `.cluster` - The original cluster spec from cls-backend (includes `.generation`, `.organization_domain`)
 - `.controller` - Controller metadata (name, type, etc.)
 - `.timestamp` - Unix timestamp for unique resource naming (e.g., `1704067200`)
 - `randomString <length>` - Function to generate random alphanumeric strings (e.g., `{{randomString 4}}` → `abcd`)
@@ -1007,15 +1011,10 @@ spec:
     - name: "validation-job"
       description: "GCP environment validation job"
       resourceManagement:
-        updateStrategy: "versioned"  # Required for Jobs (immutable resources)
-        cleanup:
-          keepCompleted: 3            # Keep 3 completed resources total
-          waitForCompletion: true     # Wait for old generation to complete
-          completionTimeout: "600s"   # Wait max 10 minutes
-          completionDetection:
-            - field: "status.conditions[?(@.type=='Complete')].status"
-              operator: "eq"
-              value: "True"
+        updateStrategy: "versioned"    # Required for Jobs (immutable resources)
+        versionInterval: "5m"          # Wait 5 minutes between recreating completed resources
+        newGenerationOnly: false       # Allow time-based recreation within the same generation
+        keepVersions: 3                # Keep 3 completed resources total
       template: |
         apiVersion: batch/v1
         kind: Job
@@ -1081,86 +1080,67 @@ func (c *Controller) determineUpdateStrategy(resourceConfig ResourceConfig, reso
 
 #### Generation Transition Behavior
 
-The controller supports simple behavior when transitioning to a new cluster generation:
+The controller supports versioned resource management with automatic cleanup:
 
 ```yaml
 resourceManagement:
   updateStrategy: "versioned"
-  cleanup:
-    waitForCompletion: true     # Wait for old generation to complete before creating new
-    completionTimeout: "300s"   # Max time to wait before force deletion
-    completionDetection:
-      - field: "status.conditions[?(@.type=='Complete')].status"
-        operator: "eq"
-        value: "True"
+  versionInterval: "5m"        # Minimum time before recreating completed resources
+  newGenerationOnly: false     # Allow time-based recreation within same generation
+  keepVersions: 2              # Keep 2 completed versions for audit trail
 ```
 
-**Transition Strategies:**
+**Transition Strategy:**
 
-1. **`waitForCompletion: true`** (Recommended for Jobs):
+The controller uses a single, simplified transition strategy:
    ```go
    func (c *Controller) getOrCreateVersionedResource(cluster *Cluster) (*unstructured.Unstructured, error) {
-       // 1. Check for old generation resources
-       oldGenResources, err := c.findResourcesForPreviousGenerations(cluster.ID, cluster.Generation)
-       if err != nil {
-           return nil, err
-       }
-
-       // 2. Wait for old generation completion if configured
-       if c.config.Cleanup.WaitForCompletion {
-           for _, oldResource := range oldGenResources {
-               if c.isResourceCompleted(oldResource, c.config.Cleanup.CompletionDetection) {
-                   // Resource completed - safe to delete
-                   c.k8sClient.Delete(ctx, oldResource)
-               } else if c.hasTimeoutExpired(oldResource, c.config.Cleanup.CompletionTimeout) {
-                   // Timeout expired - force delete
-                   c.k8sClient.Delete(ctx, oldResource)
-               } else {
-                   // Still running within timeout - wait
-                   return nil, fmt.Errorf("waiting for old generation resource to complete: %s", oldResource.GetName())
-               }
-           }
-       }
-
-       // 3. Create new generation resource
-       return c.createVersionedResource(cluster)
-   }
-   ```
-
-2. **`waitForCompletion: false`** (Default - Immediate):
-   ```go
-   func (c *Controller) getOrCreateVersionedResource(cluster *Cluster) (*unstructured.Unstructured, error) {
-       // 1. Immediately cleanup old generation resources
+       // 1. Cleanup old generation resources first
        if err := c.cleanupOldGenerations(cluster.ID, cluster.Generation); err != nil {
            return nil, err
        }
 
-       // 2. Create new generation resource immediately
+       // 2. Check for existing resource in current generation
+       currentGenResource, err := c.findResourceForGeneration(cluster.ID, cluster.Generation)
+       if err == nil && currentGenResource != nil {
+           if c.isResourceRunning(currentGenResource) {
+               // Resource is running - return it
+               return currentGenResource, nil
+           } else {
+               // Resource completed - check version interval before recreating
+               shouldRecreate, err := c.shouldRecreateVersionedResource(currentGenResource, resourceConfig)
+               if !shouldRecreate {
+                   return currentGenResource, nil  // Keep existing completed resource
+               }
+               // Delete completed resource and recreate
+               c.k8sClient.Delete(ctx, currentGenResource)
+           }
+       }
+
+       // 3. Create new versioned resource
        return c.createVersionedResource(cluster)
    }
    ```
 
 #### Generation Transition Examples
 
-**Scenario 1: GCP Validation Job (waitForCompletion: true)**
+**Scenario 1: GCP Validation Job (versioned strategy)**
 ```
 Gen 42 → Gen 43 Transition:
-Time 0:  Job validate-cluster-123-gen-42-001 is running (30% complete)
+Time 0:  Job validate-cluster-123-gen-42-001 is running
 Time 1:  Cluster generation updates to 43
-Time 2:  Controller waits for gen-42 job to complete (completionTimeout: 600s)
-         Report: Applied=False, reason=WaitingForCompletion, observedGeneration=43
-Time 3:  Controller continues waiting, reports same status
-Time 8:  Job validate-cluster-123-gen-42-001 completes successfully
-Time 9:  Delete gen-42 job, create validate-cluster-123-gen-43-001
+Time 2:  Controller immediately deletes gen-42 job
+Time 3:  Create validate-cluster-123-gen-43-001
          Report: Applied=True, Available=Unknown, observedGeneration=43
 ```
 
-**Scenario 2: DNS Zone (in_place strategy - immediate)**
+**Scenario 2: DNS Zone (in_place strategy)**
 ```
 Gen 42 → Gen 43 Transition:
 Time 0:  DNSManagedZone cluster-dns-zone exists with gen-42 config
 Time 1:  Cluster generation updates to 43
 Time 2:  Update DNSManagedZone cluster-dns-zone spec immediately (same resource)
+         Report: Applied=True, Available=depends on Config Connector status, observedGeneration=43
 ```
 
 **Scenario 3: Maestro HostedCluster (in_place strategy)**
@@ -1169,25 +1149,23 @@ Gen 42 → Gen 43 Transition:
 Time 0:  HostedCluster production-west exists with gen-42 spec
 Time 1:  Cluster generation updates to 43
 Time 2:  Update HostedCluster production-west spec via Maestro API immediately
+         Report: Applied=True, Available=depends on HostedCluster status, observedGeneration=43
 ```
 
-**Scenario 4: Validation Job with Completion Timeout**
+**Scenario 4: Validation Job with Version Interval**
 ```
-Gen 42 → Gen 43 Transition:
-Time 0:   Job validate-cluster-123-gen-42-001 is running
-Time 1:   Cluster generation updates to 43
-Time 2:   Controller waits (completionTimeout: 600s starts)
-          Report: Applied=False, reason=WaitingForCompletion, observedGeneration=43
-Time 300: Controller still waiting, reports same status
-Time 602: Timeout expires, job still running
-          Report: Applied=False, reason=CompletionTimeout, observedGeneration=43
-Time 603: Force delete gen-42 job, create validate-cluster-123-gen-43-001
-          Report: Applied=True, Available=Unknown, observedGeneration=43
+Within Generation 42 (same generation, time-based recreation):
+Time 0:   Job validate-cluster-123-gen-42-001 completes successfully
+Time 1:   Reconcile event received, job completed less than 5 minutes ago
+          Report: Applied=True, Available=True, observedGeneration=42 (keeps existing job)
+Time 6:   Reconcile event received, job completed more than 5 minutes ago (versionInterval elapsed)
+Time 7:   Delete completed job, create validate-cluster-123-gen-42-002
+          Report: Applied=True, Available=Unknown, observedGeneration=42
 ```
 
 #### Resource Completion Detection
 
-You're absolutely right - **Jobs aren't the only type that might need versioned resources!** The controller needs configurable completion detection for different resource types:
+The controller automatically detects completion for common resource types:
 
 **Versioned Strategy Use Cases:**
 1. **Immutable Resources**: Jobs, Pods (forced by API)
@@ -1196,204 +1174,101 @@ You're absolutely right - **Jobs aren't the only type that might need versioned 
 4. **Continuous Enforcement**: Resources that should be recreated regularly
 5. **Rollback Capability**: Easy rollback to previous generations
 
-#### Explicit Completion Detection
+#### Built-in Completion Detection
 
-All completion detection is explicit - no built-in magic. When using `waitForCompletion: true`, you must specify how to detect completion:
+The controller has built-in completion detection for common resource types:
 
 ```go
-// Unified completion detection using same syntax as preconditions
-func (c *Controller) isResourceCompleted(resource *unstructured.Unstructured, detectionRules []CompletionRule) bool {
-    // All rules must be true for completion
-    for _, rule := range detectionRules {
-        if !c.evaluateCompletionRule(resource, rule) {
-            return false
+// isResourceRunning checks if a resource is still running (not completed/failed)
+func (c *Controller) isResourceRunning(resource *unstructured.Unstructured) bool {
+    kind := resource.GetKind()
+
+    switch kind {
+    case "Job":
+        return c.isJobRunning(resource)
+    case "Pod":
+        return c.isPodRunning(resource)
+    default:
+        // For other resources, consider them "running" if they exist
+        // This prevents immediate recreation of non-completion-based resources
+        return true
+    }
+}
+
+// isJobRunning checks if a Job is still running
+func (c *Controller) isJobRunning(job *unstructured.Unstructured) bool {
+    // Check job status conditions for completion or failure
+    conditions, found, err := unstructured.NestedSlice(job.Object, "status", "conditions")
+    if err != nil || !found {
+        return true // No status yet - consider it running
+    }
+
+    for _, condition := range conditions {
+        conditionMap, ok := condition.(map[string]interface{})
+        if !ok { continue }
+
+        conditionType, _ := conditionMap["type"]
+        conditionStatus, _ := conditionMap["status"]
+
+        // Check for completion or failure
+        if conditionType == "Complete" && conditionStatus == "True" {
+            return false // Job completed
+        }
+        if conditionType == "Failed" && conditionStatus == "True" {
+            return false // Job failed
         }
     }
-    return true
+    return true // Still running
 }
 
-// Evaluate single completion rule (same logic as precondition evaluation)
-func (c *Controller) evaluateCompletionRule(resource *unstructured.Unstructured, rule CompletionRule) bool {
-    // Extract field value from resource (supports nested paths and JSONPath-like syntax)
-    value, exists := c.extractResourceFieldValue(resource, rule.Field)
-
-    switch rule.Operator {
-    case "eq":
-        return exists && fmt.Sprintf("%v", value) == fmt.Sprintf("%v", rule.Value)
-    case "ne":
-        return exists && fmt.Sprintf("%v", value) != fmt.Sprintf("%v", rule.Value)
-    case "exists":
-        return exists
-    case "notexists":
-        return !exists
-    case "in":
-        if !exists { return false }
-        valueArray, ok := rule.Value.([]interface{})
-        if !ok { return false }
-        valueStr := fmt.Sprintf("%v", value)
-        for _, item := range valueArray {
-            if fmt.Sprintf("%v", item) == valueStr {
-                return true
-            }
-        }
-        return false
-    case "notin":
-        // Similar to "in" but inverted logic
-        // ... implementation
-    }
-    return false
-}
-
-// Extract field value from resource (supports JSONPath-like syntax for conditions)
-func (c *Controller) extractResourceFieldValue(resource *unstructured.Unstructured, fieldPath string) (interface{}, bool) {
-    // Handle special JSONPath-like syntax for conditions
-    if strings.Contains(fieldPath, "conditions[?(@.type==") {
-        return c.extractConditionValue(resource, fieldPath)
+// isPodRunning checks if a Pod is still running
+func (c *Controller) isPodRunning(pod *unstructured.Unstructured) bool {
+    phase, found, err := unstructured.NestedString(pod.Object, "status", "phase")
+    if err != nil || !found {
+        return true // No status yet - consider it running
     }
 
-    // Handle normal dot notation (e.g., "status.phase")
-    parts := strings.Split(fieldPath, ".")
-    value, found, err := unstructured.NestedFieldNoCopy(resource.Object, parts...)
-    if err != nil {
-        return nil, false
-    }
-    return value, found
-}
-
-// Extract value from conditions array using JSONPath-like syntax
-func (c *Controller) extractConditionValue(resource *unstructured.Unstructured, fieldPath string) (interface{}, bool) {
-    // Parse "status.conditions[?(@.type=='Complete')].status" syntax
-    // ... implementation to find condition by type and extract status
+    // Pod is not running if it's succeeded or failed
+    return phase != "Succeeded" && phase != "Failed"
 }
 ```
 
-**Strategy 1: Condition-Based (Jobs)**
-```yaml
-resourceManagement:
-  updateStrategy: "versioned"
-  cleanup:
-    waitForCompletion: true
-    completionDetection:
-      - field: "status.conditions[?(@.type=='Complete')].status"
-        operator: "eq"
-        value: "True"
-```
+#### Versioned Strategy Examples
 
-**Strategy 2: Field-Based (Pods)**
-```yaml
-resourceManagement:
-  updateStrategy: "versioned"
-  cleanup:
-    waitForCompletion: true
-    completionDetection:
-      - field: "status.phase"
-        operator: "eq"
-        value: "Succeeded"
-```
-
-**Strategy 3: No Waiting (ConfigMaps)**
-```yaml
-resourceManagement:
-  updateStrategy: "versioned"
-  cleanup:
-    waitForCompletion: false  # Don't wait - immediately delete old and create new
-    keepCompleted: 5          # Keep 5 versions for audit trail
-```
-
-#### Versioned Strategy Examples Beyond Jobs
-
-**Example 1: Job with Explicit Completion**
+**Example 1: Job with Automatic Completion Detection**
 ```yaml
 resources:
   - name: "validation-job"
-    description: "Validation job with explicit completion detection"
+    description: "Validation job with automatic completion detection"
     resourceManagement:
-      updateStrategy: "versioned"
-      cleanup:
-        keepCompleted: 2
-        waitForCompletion: true
-        completionDetection:
-          - field: "status.conditions[?(@.type=='Complete')].status"
-            operator: "eq"
-            value: "True"
+      updateStrategy: "versioned"      # Required for Jobs (immutable resources)
+      versionInterval: "5m"            # Wait 5 minutes before recreating completed jobs
+      newGenerationOnly: false         # Allow time-based recreation within same generation
+      keepVersions: 2                  # Keep 2 completed jobs for audit
 ```
 
-**Example 2: Deployment with Readiness Check**
-```yaml
-resources:
-  - name: "security-scanner"
-    description: "Security scanner that should be recreated regularly"
-    resourceManagement:
-      updateStrategy: "versioned"
-      cleanup:
-        keepCompleted: 1             # Only keep 1 for quick turnover
-        waitForCompletion: true
-        completionTimeout: "300s"
-        completionDetection:
-          - field: "status.conditions[?(@.type=='Available')].status"
-            operator: "eq"
-            value: "True"
-```
-
-**Example 3: ConfigMap for Audit Trail (No Waiting)**
+**Example 2: ConfigMap for Audit Trail**
 ```yaml
 resources:
   - name: "cluster-config"
     description: "Versioned cluster configuration for audit trail"
     resourceManagement:
-      updateStrategy: "versioned"
-      cleanup:
-        keepCompleted: 10            # Keep 10 versions for audit
-        waitForCompletion: false     # ConfigMaps don't need to "complete"
+      updateStrategy: "versioned"      # For audit trail
+      versionInterval: "0s"            # Immediate recreation (no waiting)
+      newGenerationOnly: true          # Only create new versions on generation changes
+      keepVersions: 10                 # Keep 10 versions for audit
 ```
 
-**Example 4: Custom Resource with Field-Based Completion**
+**Example 3: Custom Resource with Versioned Strategy**
 ```yaml
 resources:
   - name: "backup-job"
     description: "Custom backup resource"
     resourceManagement:
-      updateStrategy: "versioned"
-      cleanup:
-        keepCompleted: 3
-        waitForCompletion: true
-        completionDetection:
-          - field: "status.backupState"
-            operator: "eq"
-            value: "Completed"
-```
-
-#### Unified Syntax Benefits
-
-**Consistent & Predictable:**
-- **Same syntax** for preconditions (cluster evaluation) and completion detection (resource evaluation)
-- **Familiar operators**: All use the same `eq`, `ne`, `in`, `notin`, `exists`, `notexists` operators
-- **Flexible field access**: Support for nested paths and JSONPath-like syntax for conditions
-- **No special cases**: Everything is just field evaluation with operators
-
-**Common Completion Patterns:**
-- **Jobs**: `field: "status.conditions[?(@.type=='Complete')].status", operator: "eq", value: "True"`
-- **Pods**: `field: "status.phase", operator: "eq", value: "Succeeded"`
-- **Deployments**: `field: "status.conditions[?(@.type=='Available')].status", operator: "eq", value: "True"`
-- **ConfigMaps/Secrets**: `waitForCompletion: false` (no detection needed)
-- **Existence checks**: `field: "status.observedGeneration", operator: "exists"`
-
-**Advanced Examples:**
-```yaml
-# Multiple conditions (all must be true)
-completionDetection:
-  - field: "status.conditions[?(@.type=='Complete')].status"
-    operator: "eq"
-    value: "True"
-  - field: "status.failed"
-    operator: "eq"
-    value: 0
-
-# Complex field paths
-completionDetection:
-  - field: "status.deployment.readyReplicas"
-    operator: "eq"
-    value: 3
+      updateStrategy: "versioned"      # For continuous enforcement
+      versionInterval: "1h"            # Recreate completed backups every hour
+      newGenerationOnly: false         # Allow time-based recreation
+      keepVersions: 3                  # Keep 3 completed backup jobs
 ```
 
 #### Resource Management Logic
@@ -1494,58 +1369,76 @@ Gen 2 (updated)   → Delete resource-gen-1-002 → Create resource-gen-2-001 �
 When using `updateStrategy: "versioned"`, the controller supports simple, predictable cleanup:
 
 1. **Keep N completed resources** - Simple count across all generations
-2. **Optional wait for completion** - Simple boolean with timeout
-3. **Always delete old generations** - Clean slate for each generation
-4. **Never delete running resources** - Safety built-in
+2. **Automatic cleanup of old generations** - Clean slate for each generation transition
+3. **Time-based recreation** - Configurable interval for recreating completed resources
+4. **Generation-aware recreation** - Control whether to recreate only on generation changes
 
 **Note**: Cleanup policies only apply to versioned strategy. In-place strategy maintains a single resource per cluster, so no cleanup is needed.
 
 #### Simple Cleanup Configuration Examples
 
-**Job with Waiting** (Recommended):
+**Job with Time-based Recreation**:
 ```yaml
 resourceManagement:
   updateStrategy: "versioned"
-  cleanup:
-    keepCompleted: 3               # Keep 3 completed resources total
-    waitForCompletion: true        # Wait for old generation to complete
-    completionTimeout: "600s"      # Max 10 minutes
-    completionDetection:
-      - field: "status.conditions[?(@.type=='Complete')].status"
-        operator: "eq"
-        value: "True"
+  versionInterval: "5m"            # Wait 5 minutes before recreating completed resources
+  newGenerationOnly: false         # Allow time-based recreation within same generation
+  keepVersions: 3                  # Keep 3 completed resources total
 ```
 
-**Audit Trail ConfigMap** (No Waiting):
+**Audit Trail ConfigMap**:
 ```yaml
 resourceManagement:
   updateStrategy: "versioned"
-  cleanup:
-    keepCompleted: 10              # Keep 10 versions for audit
-    waitForCompletion: false       # Immediate replacement
+  versionInterval: "0s"            # Immediate recreation (no waiting)
+  newGenerationOnly: true          # Only recreate on generation changes
+  keepVersions: 10                 # Keep 10 versions for audit
 ```
 
 #### Simple Cleanup Implementation
 ```go
-func (c *ResourceCleanupManager) CleanupResources(clusterID, currentGeneration string) error {
-    // 1. Get all completed resources for this cluster
-    completedResources, err := c.listCompletedResourcesByCluster(clusterID)
+func (c *Controller) cleanupCompletedVersions(ctx context.Context, resourceClient client.ResourceClient, resourceConfig crd.ResourceConfig, clusterID string, currentGeneration int64, kind, namespace string) error {
+    // Get keepVersions setting (default to 2 if not specified)
+    keepVersions := 2
+    if resourceConfig.ResourceManagement != nil && resourceConfig.ResourceManagement.KeepVersions > 0 {
+        keepVersions = resourceConfig.ResourceManagement.KeepVersions
+    }
+
+    // List all resources for this cluster and generation
+    labels := map[string]string{
+        "cluster-id":         clusterID,
+        "cluster-generation": fmt.Sprintf("%d", currentGeneration),
+    }
+
+    resourceList := &unstructured.UnstructuredList{}
+    err := resourceClient.List(ctx, namespace, labels, resourceList)
     if err != nil {
-        return err
+        return fmt.Errorf("failed to list resources for version cleanup: %w", err)
     }
 
-    // 2. Always clean up old generations (keep only current)
-    if err := c.cleanupOldGenerations(completedResources, currentGeneration); err != nil {
-        return err
+    if len(resourceList.Items) <= keepVersions {
+        return nil // No cleanup needed
     }
 
-    // 3. Keep only N completed resources (simple count-based cleanup)
-    if len(completedResources) > c.config.KeepCompleted {
-        excess := completedResources[c.config.KeepCompleted:]
-        for _, resource := range excess {
-            if err := c.k8sClient.Delete(ctx, resource); err != nil {
-                return err
-            }
+    // Filter to only completed resources and sort by creation time (newest first)
+    var completedResources []*unstructured.Unstructured
+    for i := range resourceList.Items {
+        resource := &resourceList.Items[i]
+        if !c.isResourceRunning(resource) {
+            completedResources = append(completedResources, resource)
+        }
+    }
+
+    if len(completedResources) <= keepVersions {
+        return nil // No cleanup needed
+    }
+
+    // Delete old completed resources beyond keepVersions limit
+    resourcesToDelete := completedResources[keepVersions:]
+    for _, resource := range resourcesToDelete {
+        if err := resourceClient.Delete(ctx, resource); err != nil {
+            c.logger.Warn("Failed to delete old completed version", zap.Error(err))
+            // Continue cleanup - don't fail on individual deletion errors
         }
     }
 
@@ -2059,14 +1952,9 @@ spec:
       description: "GCP environment validation job"
       resourceManagement:
         updateStrategy: "versioned"  # Required for Jobs (immutable resources)
-        cleanup:
-          keepCompleted: 3            # Keep 3 validation results
-          waitForCompletion: true     # Wait for validation to complete before starting new
-          completionTimeout: "600s"   # Max 10 minutes for validation to complete
-          completionDetection:
-            - field: "status.conditions[?(@.type=='Complete')].status"
-              operator: "eq"
-              value: "True"
+        versionInterval: "5m"        # Wait 5 minutes before recreating completed jobs
+        newGenerationOnly: false     # Allow time-based recreation within same generation
+        keepVersions: 3              # Keep 3 validation results
       template: |
         apiVersion: batch/v1
         kind: Job
@@ -2241,6 +2129,7 @@ spec:
 {
   "id": "cluster-789",
   "name": "production-west",
+  "organization_domain": "redhat.com",
   "generation": 15,
   "spec": {
     "provider": "gcp",
@@ -2347,6 +2236,7 @@ spec:
 {
   "id": "cluster-123",
   "name": "production-east",
+  "organization_domain": "redhat.com",
   "generation": 42,
   "spec": {
     "provider": "gcp",

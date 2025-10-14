@@ -1,0 +1,174 @@
+apiVersion: cls.redhat.com/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: echo-job2-controller
+  namespace: cls-system
+spec:
+  name: "echo-job2-controller"
+  description: "Example controller that creates versioned echo jobs with time-based recreation and completion waiting"
+
+  # Target configuration - deploy to local cluster
+  target:
+    type: "kube-api"
+
+  # No preconditions for now - test the core functionality
+
+  # Resources to create
+  resources:
+  - name: "echo-job"
+    description: "Job that echoes cluster information and completes"
+    resourceManagement:
+      # Use versioned strategy for immutable Jobs
+      updateStrategy: "versioned"
+      # Only create new version after 10 minutes in same generation
+      versionInterval: "10m"
+      # Allow time-based recreation (not just generation-based)
+      newGenerationOnly: false
+      # Keep 3 completed versions for history
+      keepVersions: 3
+    template: |
+      apiVersion: batch/v1
+      kind: Job
+      metadata:
+        name: "echo-job-{{.cluster.id}}-gen-{{.cluster.generation}}-{{.timestamp}}"
+        namespace: "cls-system"
+        labels:
+          cluster-id: "{{.cluster.id}}"
+          cluster-generation: "{{.cluster.generation}}"
+          controller: "echo-job2-controller"
+          app: "echo-job"
+      spec:
+        template:
+          metadata:
+            labels:
+              cluster-id: "{{.cluster.id}}"
+              cluster-generation: "{{.cluster.generation}}"
+              controller: "echo-job2-controller"
+              app: "echo-job"
+          spec:
+            restartPolicy: Never
+            containers:
+            - name: echo
+              image: busybox:1.35
+              command:
+              - /bin/sh
+              - -c
+              - |
+                echo "=== Echo Job Starting ==="
+                echo "Cluster ID: {{.cluster.id}}"
+                echo "Cluster Name: {{.cluster.name}}"
+                echo "Cluster Generation: {{.cluster.generation}}"
+                echo "Timestamp: $(date)"
+                echo "Job Name: $HOSTNAME"
+
+                # Parse cluster spec for additional info
+                echo "=== Cluster Spec ==="
+                {{- if .cluster.spec}}
+                echo "{{.cluster.spec}}" | head -20
+                {{- end}}
+
+                # Simulate some work (sleep for 30 seconds)
+                echo "=== Working for 30 seconds ==="
+                sleep 30
+
+                echo "=== Echo Job Completed Successfully ==="
+                echo "Completion time: $(date)"
+              resources:
+                requests:
+                  cpu: "50m"
+                  memory: "64Mi"
+                limits:
+                  cpu: "100m"
+                  memory: "128Mi"
+        backoffLimit: 2
+        activeDeadlineSeconds: 300  # 5 minute job timeout
+
+  # Status conditions to report back to cls-backend
+  statusConditions:
+  - name: "Applied"
+    status: |
+      {{- $job := index .resources "echo-job" -}}
+      {{- if $job -}}
+        {{- if $job.metadata.name -}}True{{- else -}}False{{- end -}}
+      {{- else -}}False{{- end -}}
+    reason: |
+      {{- $job := index .resources "echo-job" -}}
+      {{- if $job -}}
+        {{- if $job.metadata.name -}}EchoJobCreated{{- else -}}EchoJobNotCreated{{- end -}}
+      {{- else -}}EchoJobNotCreated{{- end -}}
+    message: |
+      {{- $job := index .resources "echo-job" -}}
+      {{- if $job -}}
+        {{- if $job.metadata.name -}}Echo job {{ $job.metadata.name }} has been created{{- else -}}Echo job has not been created yet{{- end -}}
+      {{- else -}}Echo job has not been created yet{{- end -}}
+
+  - name: "Available"
+    status: |
+      {{- $job := index .resources "echo-job" -}}
+      {{- if $job -}}
+        {{- if $job.status -}}
+          {{- if $job.status.conditions -}}
+            {{- range $job.status.conditions -}}
+              {{- if eq .type "Complete" -}}
+                {{- if eq .status "True" -}}True{{- else -}}Unknown{{- end -}}
+              {{- else if eq .type "Failed" -}}
+                {{- if eq .status "True" -}}False{{- end -}}
+              {{- end -}}
+            {{- end -}}
+          {{- else -}}Unknown{{- end -}}
+        {{- else -}}Unknown{{- end -}}
+      {{- else -}}False{{- end -}}
+    reason: |
+      {{- $job := index .resources "echo-job" -}}
+      {{- if $job -}}
+        {{- if $job.status -}}
+          {{- if $job.status.conditions -}}
+            {{- range $job.status.conditions -}}
+              {{- if eq .type "Complete" -}}
+                {{- if eq .status "True" -}}JobCompleted{{- else -}}JobInProgress{{- end -}}
+              {{- else if eq .type "Failed" -}}
+                {{- if eq .status "True" -}}JobFailed{{- end -}}
+              {{- end -}}
+            {{- end -}}
+          {{- else -}}JobPending{{- end -}}
+        {{- else -}}JobPending{{- end -}}
+      {{- else -}}JobNotCreated{{- end -}}
+    message: |
+      {{- $job := index .resources "echo-job" -}}
+      {{- if $job -}}
+        Echo job {{ $job.metadata.name }}
+        {{- if $job.status -}}
+          {{- if $job.status.conditions -}}
+            {{- range $job.status.conditions -}}
+              {{- if eq .type "Complete" -}}
+                {{- if eq .status "True" -}}completed successfully{{- else -}}is in progress{{- end -}}
+              {{- else if eq .type "Failed" -}}
+                {{- if eq .status "True" -}}failed to complete{{- end -}}
+              {{- end -}}
+            {{- end -}}
+          {{- else -}}is pending{{- end -}}
+        {{- else -}}is pending{{- end -}}
+      {{- else -}}has not been created{{- end -}}
+
+  - name: "Ready"
+    status: |
+      {{- $job := index .resources "echo-job" -}}
+      {{- if $job -}}
+        {{- if $job.status -}}
+          {{- if or (gt ($job.status.active | default 0) 0) (gt ($job.status.succeeded | default 0) 0) -}}True{{- else if gt ($job.status.failed | default 0) 0 -}}False{{- else -}}Unknown{{- end -}}
+        {{- else -}}Unknown{{- end -}}
+      {{- else -}}False{{- end -}}
+    reason: |
+      {{- $job := index .resources "echo-job" -}}
+      {{- if $job -}}
+        {{- if $job.status -}}
+          {{- if gt ($job.status.active | default 0) 0 -}}JobRunning{{- else if gt ($job.status.succeeded | default 0) 0 -}}JobSucceeded{{- else if gt ($job.status.failed | default 0) 0 -}}JobFailed{{- else -}}JobIdle{{- end -}}
+        {{- else -}}JobPending{{- end -}}
+      {{- else -}}JobNotCreated{{- end -}}
+    message: |
+      {{- $job := index .resources "echo-job" -}}
+      {{- if $job -}}
+        {{- if $job.status -}}
+          Job ready status: Active={{ $job.status.active | default 0 }}, Succeeded={{ $job.status.succeeded | default 0 }}, Failed={{ $job.status.failed | default 0 }}
+        {{- else -}}Job status pending{{- end -}}
+      {{- else -}}Job not created{{- end -}}
