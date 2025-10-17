@@ -10,7 +10,7 @@ import (
 
 	"github.com/apahim/cls-controller/internal/config"
 	"github.com/apahim/cls-controller/internal/controller"
-	controllersdk "github.com/apahim/controller-sdk"
+	"github.com/apahim/cls-controller/internal/sdk"
 	"go.uber.org/zap"
 	"k8s.io/client-go/rest"
 	"k8s.io/client-go/tools/clientcmd"
@@ -96,7 +96,7 @@ func main() {
 	}
 
 	// Create SDK client for event handling and status reporting
-	sdkClient, err := controllersdk.NewClient(cfg.SDKConfig, clsController)
+	sdkClient, err := sdk.NewClient(cfg.SDKConfig, clsController)
 	if err != nil {
 		logger.Fatal("Failed to create SDK client", zap.Error(err))
 	}

@@ -15,7 +15,7 @@ spec:
     kubeConfig:
       secretRef:
         name: "shard01"                  # Secret name in cls-system namespace
-        key: "config"                    # Key within the secret containing the kubeconfig
+        key: "kubeconfig"                # Key within the secret containing the kubeconfig
 
   resources:
     - name: "remote-namespace"

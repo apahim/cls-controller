@@ -6,7 +6,7 @@ import (
 	"sync"
 
 	"github.com/apahim/cls-controller/internal/crd"
-	controllersdk "github.com/apahim/controller-sdk"
+	"github.com/apahim/cls-controller/internal/sdk"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -56,7 +56,7 @@ func (m *Manager) SetSecretNamespace(namespace string) {
 }
 
 // GetClient returns the appropriate client based on target configuration
-func (m *Manager) GetClient(ctx context.Context, target *crd.TargetConfig, cluster *controllersdk.Cluster) (ResourceClient, error) {
+func (m *Manager) GetClient(ctx context.Context, target *crd.TargetConfig, cluster *sdk.Cluster) (ResourceClient, error) {
 	if target == nil || target.Type == "" || target.Type == crd.TargetTypeKubeAPI {
 		return m.getKubeAPIClient(ctx, target, cluster)
 	}
@@ -72,7 +72,7 @@ func (m *Manager) GetClient(ctx context.Context, target *crd.TargetConfig, clust
 }
 
 // getKubeAPIClient returns local or remote Kubernetes client
-func (m *Manager) getKubeAPIClient(ctx context.Context, target *crd.TargetConfig, cluster *controllersdk.Cluster) (ResourceClient, error) {
+func (m *Manager) getKubeAPIClient(ctx context.Context, target *crd.TargetConfig, cluster *sdk.Cluster) (ResourceClient, error) {
 	// No kubeConfig specified - use local cluster
 	if target == nil || target.KubeConfig == nil {
 		return &KubeAPIClient{Client: m.localClient}, nil
@@ -110,7 +110,7 @@ func (m *Manager) getKubeAPIClient(ctx context.Context, target *crd.TargetConfig
 }
 
 // getMaestroClient returns Maestro gRPC client with templated configuration
-func (m *Manager) getMaestroClient(ctx context.Context, target *crd.TargetConfig, cluster *controllersdk.Cluster) (ResourceClient, error) {
+func (m *Manager) getMaestroClient(ctx context.Context, target *crd.TargetConfig, cluster *sdk.Cluster) (ResourceClient, error) {
 	// TODO: Implement template rendering for endpoint and consumer
 	// For now, return error as Maestro client is not implemented
 	return nil, fmt.Errorf("Maestro client not implemented yet")

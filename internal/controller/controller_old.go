@@ -19,7 +19,7 @@ import (
 	"sigs.k8s.io/controller-runtime/pkg/reconcile"
 )
 
-// Controller represents the simplified CLS controller
+// Controller represents the generalized CLS controller
 type Controller struct {
 	config       *config.Config
 	k8sClient    ctrlclient.Client
@@ -38,7 +38,7 @@ type Controller struct {
 	controllerConfig *crd.ControllerConfig
 }
 
-// New creates a new simplified controller
+// New creates a new generalized controller
 func New(cfg *config.Config, k8sClient ctrlclient.Client, logger *zap.Logger) (*Controller, error) {
 	templateEngine := template.NewEngine(cfg.TemplateTimeout, logger)
 
@@ -227,7 +227,7 @@ func (c *Controller) handleClusterCreated(event *sdk.ClusterEvent, cluster *sdk.
 }
 
 // handleClusterUpdated processes cluster update events
-func (c *Controller) handleClusterUpdated(event *sdk.ClusterEvent, cluster *sdk.Cluster) error {
+func (c *Controller) handleClusterUpdated(event *controllersdk.ClusterEvent, cluster *controllersdk.Cluster) error {
 	c.logger.Info("Processing cluster update", zap.String("cluster_id", event.ClusterID))
 
 	// Create or update all resources
@@ -242,14 +242,14 @@ func (c *Controller) handleClusterUpdated(event *sdk.ClusterEvent, cluster *sdk.
 }
 
 // handleClusterDeleted processes cluster deletion events
-func (c *Controller) handleClusterDeleted(event *sdk.ClusterEvent, cluster *sdk.Cluster) error {
+func (c *Controller) handleClusterDeleted(event *controllersdk.ClusterEvent, cluster *controllersdk.Cluster) error {
 	c.logger.Info("Processing cluster deletion", zap.String("cluster_id", event.ClusterID))
 
 	// For now, just report that deletion was processed
 	// TODO: Implement resource cleanup if needed
 
-	update := sdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
-	update.AddCondition(sdk.NewCondition(
+	update := controllersdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
+	update.AddCondition(controllersdk.NewCondition(
 		"Applied",
 		"False",
 		"ClusterDeleted",
@@ -260,7 +260,7 @@ func (c *Controller) handleClusterDeleted(event *sdk.ClusterEvent, cluster *sdk.
 }
 
 // handleClusterReconcile processes cluster reconciliation events
-func (c *Controller) handleClusterReconcile(event *sdk.ClusterEvent, cluster *sdk.Cluster) error {
+func (c *Controller) handleClusterReconcile(event *controllersdk.ClusterEvent, cluster *controllersdk.Cluster) error {
 	c.logger.Info("Processing cluster reconciliation", zap.String("cluster_id", event.ClusterID))
 
 	// Same logic as update - check current state and ensure resources are correct
@@ -306,18 +306,18 @@ func (c *Controller) updateConfigStatus(ctx context.Context, config *crd.Control
 }
 
 // reportError reports an error status
-func (c *Controller) reportError(event *sdk.ClusterEvent, reason string, err error) error {
-	update := sdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
+func (c *Controller) reportError(event *controllersdk.ClusterEvent, reason string, err error) error {
+	update := controllersdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
 
-	update.AddCondition(sdk.NewCondition(
+	update.AddCondition(controllersdk.NewCondition(
 		"Applied",
 		"False",
 		reason,
 		err.Error(),
 	))
 
-	errorInfo := sdk.NewErrorInfo(
-		sdk.ErrorTypeSystem,
+	errorInfo := controllersdk.NewErrorInfo(
+		controllersdk.ErrorTypeSystem,
 		"",
 		err.Error(),
 		false,
@@ -327,23 +327,143 @@ func (c *Controller) reportError(event *sdk.ClusterEvent, reason string, err err
 	return c.sdkClient.ReportStatus(update)
 }
 
-// reportPreconditionFailure reports precondition failure
-func (c *Controller) reportPreconditionFailure(event *sdk.ClusterEvent, cluster *sdk.Cluster) error {
-	update := sdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
-	update.AddCondition(sdk.NewCondition(
+// reportErrorWithOrg reports an error status using organization-aware API
+func (c *Controller) reportErrorWithOrg(event *controllersdk.ClusterEvent, organizationDomain string, reason string, err error) error {
+	update := controllersdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
+
+	update.AddCondition(controllersdk.NewCondition(
+		"Applied",
+		"False",
+		reason,
+		err.Error(),
+	))
+
+	errorInfo := controllersdk.NewErrorInfo(
+		controllersdk.ErrorTypeSystem,
+		"",
+		err.Error(),
+		false,
+	)
+	update.SetError(errorInfo)
+
+	// Use organization-aware status reporting
+	mtClient := c.sdkClient.GetMultiTenantAPIClient()
+	if mtClient != nil {
+		ctx := context.Background()
+		return mtClient.ReportClusterStatusWithOrg(ctx, organizationDomain, update)
+	}
+
+	// Fallback to legacy reporting
+	return c.sdkClient.ReportStatus(update)
+}
+
+// Organization-aware event handlers
+
+// handleClusterCreatedWithOrg processes cluster creation events with organization context
+func (c *Controller) handleClusterCreatedWithOrg(event *controllersdk.ClusterEvent, organizationDomain string, cluster *controllersdk.Cluster) error {
+	c.logger.Info("Processing cluster creation",
+		zap.String("cluster_id", event.ClusterID),
+		zap.String("organization_domain", organizationDomain))
+
+	// Create or update all resources
+	resources, err := c.getOrCreateAllResources(cluster)
+	if err != nil {
+		c.logger.Error("Failed to create resources", zap.Error(err))
+		return c.reportErrorWithOrg(event, organizationDomain, "ResourceCreationFailed", err)
+	}
+
+	// Report status
+	return c.evaluateAndReportStatusWithOrg(event, organizationDomain, cluster, resources)
+}
+
+// handleClusterUpdatedWithOrg processes cluster update events with organization context
+func (c *Controller) handleClusterUpdatedWithOrg(event *controllersdk.ClusterEvent, organizationDomain string, cluster *controllersdk.Cluster) error {
+	c.logger.Info("Processing cluster update",
+		zap.String("cluster_id", event.ClusterID),
+		zap.String("organization_domain", organizationDomain))
+
+	// Create or update all resources
+	resources, err := c.getOrCreateAllResources(cluster)
+	if err != nil {
+		c.logger.Error("Failed to update resources", zap.Error(err))
+		return c.reportErrorWithOrg(event, organizationDomain, "ResourceUpdateFailed", err)
+	}
+
+	// Report status
+	return c.evaluateAndReportStatusWithOrg(event, organizationDomain, cluster, resources)
+}
+
+// handleClusterDeletedWithOrg processes cluster deletion events with organization context
+func (c *Controller) handleClusterDeletedWithOrg(event *controllersdk.ClusterEvent, organizationDomain string, cluster *controllersdk.Cluster) error {
+	c.logger.Info("Processing cluster deletion",
+		zap.String("cluster_id", event.ClusterID),
+		zap.String("organization_domain", organizationDomain))
+
+	// For now, just report that deletion was processed
+	// TODO: Implement resource cleanup if needed
+
+	update := controllersdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
+	update.AddCondition(controllersdk.NewCondition(
+		"Applied",
+		"False",
+		"ClusterDeleted",
+		"Cluster deletion processed",
+	))
+
+	// Use organization-aware status reporting
+	mtClient := c.sdkClient.GetMultiTenantAPIClient()
+	if mtClient != nil {
+		ctx := context.Background()
+		return mtClient.ReportClusterStatusWithOrg(ctx, organizationDomain, update)
+	}
+
+	// Fallback to legacy reporting
+	return c.sdkClient.ReportStatus(update)
+}
+
+// handleClusterReconcileWithOrg processes cluster reconciliation events with organization context
+func (c *Controller) handleClusterReconcileWithOrg(event *controllersdk.ClusterEvent, organizationDomain string, cluster *controllersdk.Cluster) error {
+	c.logger.Info("Processing cluster reconciliation",
+		zap.String("cluster_id", event.ClusterID),
+		zap.String("organization_domain", organizationDomain))
+
+	// Same logic as update - check current state and ensure resources are correct
+	resources, err := c.getOrCreateAllResources(cluster)
+	if err != nil {
+		c.logger.Error("Failed to reconcile resources", zap.Error(err))
+		return c.reportErrorWithOrg(event, organizationDomain, "ResourceReconciliationFailed", err)
+	}
+
+	// Report status
+	return c.evaluateAndReportStatusWithOrg(event, organizationDomain, cluster, resources)
+}
+
+// reportPreconditionFailureWithOrg reports precondition failure with organization context
+func (c *Controller) reportPreconditionFailureWithOrg(event *controllersdk.ClusterEvent, organizationDomain string, cluster *controllersdk.Cluster) error {
+	update := controllersdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
+	update.AddCondition(controllersdk.NewCondition(
 		"Applied",
 		"False",
 		"PreconditionsNotMet",
 		"Controller preconditions not satisfied for this cluster",
 	))
 
+	// Use organization-aware status reporting
+	mtClient := c.sdkClient.GetMultiTenantAPIClient()
+	if mtClient != nil {
+		ctx := context.Background()
+		return mtClient.ReportClusterStatusWithOrg(ctx, organizationDomain, update)
+	}
+
+	// Fallback to legacy reporting
 	return c.sdkClient.ReportStatus(update)
 }
 
-// evaluateAndReportStatus evaluates status conditions and reports them
-func (c *Controller) evaluateAndReportStatus(event *sdk.ClusterEvent, cluster *sdk.Cluster, resources map[string]*unstructured.Unstructured) error {
-	c.logger.Info("Starting status evaluation and reporting",
+// evaluateAndReportStatusWithOrg evaluates status conditions and reports them with organization context
+func (c *Controller) evaluateAndReportStatusWithOrg(event *controllersdk.ClusterEvent, organizationDomain string, cluster *controllersdk.Cluster, resources map[string]*unstructured.Unstructured) error {
+	c.logger.Info("Starting status evaluation and reporting with organization context",
 		zap.String("cluster_id", event.ClusterID),
+		zap.String("organization_domain", organizationDomain),
 		zap.Int("resource_count", len(resources)),
 	)
 
@@ -399,10 +519,10 @@ func (c *Controller) evaluateAndReportStatus(event *sdk.ClusterEvent, cluster *s
 		}
 	}
 
-	update := sdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
+	update := controllersdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
 
 	// Add default Applied condition
-	update.AddCondition(sdk.NewCondition(
+	update.AddCondition(controllersdk.NewCondition(
 		"Applied",
 		"True",
 		"ResourcesCreated",
@@ -427,7 +547,7 @@ func (c *Controller) evaluateAndReportStatus(event *sdk.ClusterEvent, cluster *s
 			zap.String("message", message),
 		)
 
-		update.AddCondition(sdk.NewCondition(
+		update.AddCondition(controllersdk.NewCondition(
 			conditionConfig.Name,
 			status,
 			reason,
@@ -454,18 +574,36 @@ func (c *Controller) evaluateAndReportStatus(event *sdk.ClusterEvent, cluster *s
 
 	update.SetMetadata("resources", resourceStatuses)
 
-	c.logger.Info("Publishing status update to cls-backend",
+	c.logger.Info("Publishing status update to cls-backend with organization context",
 		zap.String("cluster_id", event.ClusterID),
+		zap.String("organization_domain", organizationDomain),
 		zap.Int("condition_count", len(update.Conditions)),
 	)
 
+	// Use organization-aware status reporting
+	mtClient := c.sdkClient.GetMultiTenantAPIClient()
+	if mtClient != nil {
+		err = mtClient.ReportClusterStatusWithOrg(ctx, organizationDomain, update)
+		if err != nil {
+			c.logger.Error("Failed to publish status update with organization context", zap.Error(err))
+			return err
+		}
+
+		c.logger.Info("Status update published successfully with organization context",
+			zap.String("cluster_id", event.ClusterID),
+			zap.String("organization_domain", organizationDomain),
+		)
+		return nil
+	}
+
+	// Fallback to legacy reporting
 	err = c.sdkClient.ReportStatus(update)
 	if err != nil {
-		c.logger.Error("Failed to publish status update", zap.Error(err))
+		c.logger.Error("Failed to publish status update (legacy)", zap.Error(err))
 		return err
 	}
 
-	c.logger.Info("Status update published successfully",
+	c.logger.Info("Status update published successfully (legacy)",
 		zap.String("cluster_id", event.ClusterID),
 	)
 	return nil
@@ -480,18 +618,4 @@ func GetScheme() *runtime.Scheme {
 	_ = crd.AddToScheme(scheme)
 	crd.EnsureTypesRegistered(scheme) // Explicitly register types
 	return scheme
-}
-
-// evaluatePreconditions evaluates whether this controller should act on a cluster
-// Note: These methods would need to be imported from the existing controller implementation
-// For now, placeholder implementations
-func (c *Controller) evaluatePreconditions(cluster *sdk.Cluster) bool {
-	// TODO: Import actual implementation
-	return true
-}
-
-// getOrCreateAllResources creates/updates all resources for a cluster
-func (c *Controller) getOrCreateAllResources(cluster *sdk.Cluster) (map[string]*unstructured.Unstructured, error) {
-	// TODO: Import actual implementation
-	return make(map[string]*unstructured.Unstructured), nil
 }

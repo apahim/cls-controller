@@ -3,9 +3,10 @@ module github.com/apahim/cls-controller
 go 1.21
 
 require (
-	github.com/apahim/controller-sdk v0.0.0
+	cloud.google.com/go/pubsub v1.33.0
 	github.com/spf13/viper v1.16.0
 	go.uber.org/zap v1.26.0
+	google.golang.org/api v0.149.0
 	k8s.io/api v0.28.0
 	k8s.io/apimachinery v0.28.0
 	k8s.io/client-go v0.28.0
@@ -13,14 +14,11 @@ require (
 	sigs.k8s.io/yaml v1.3.0
 )
 
-replace github.com/apahim/controller-sdk => ../cls-controller-sdk
-
 require (
 	cloud.google.com/go v0.110.10 // indirect
 	cloud.google.com/go/compute v1.23.3 // indirect
 	cloud.google.com/go/compute/metadata v0.2.3 // indirect
 	cloud.google.com/go/iam v1.1.5 // indirect
-	cloud.google.com/go/pubsub v1.33.0 // indirect
 	github.com/beorn7/perks v1.0.1 // indirect
 	github.com/cespare/xxhash/v2 v2.2.0 // indirect
 	github.com/davecgh/go-spew v1.1.1 // indirect
@@ -76,7 +74,6 @@ require (
 	golang.org/x/text v0.14.0 // indirect
 	golang.org/x/time v0.3.0 // indirect
 	gomodules.xyz/jsonpatch/v2 v2.4.0 // indirect
-	google.golang.org/api v0.149.0 // indirect
 	google.golang.org/appengine v1.6.8 // indirect
 	google.golang.org/genproto v0.0.0-20231127180814-3a041ad873d4 // indirect
 	google.golang.org/genproto/googleapis/api v0.0.0-20231127180814-3a041ad873d4 // indirect

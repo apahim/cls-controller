@@ -5,7 +5,7 @@ import (
 	"os"
 	"time"
 
-	controllersdk "github.com/apahim/controller-sdk"
+	"github.com/apahim/cls-controller/internal/sdk"
 	"github.com/spf13/viper"
 )
 
@@ -24,10 +24,8 @@ type Config struct {
 	APIBaseURL  string `mapstructure:"api_base_url"`
 	APITimeout  time.Duration `mapstructure:"api_timeout"`
 
-	// Organization configuration for multi-tenant API access (optional - can come from events)
-	OrganizationID     string `mapstructure:"organization_id"`
-	OrganizationDomain string `mapstructure:"organization_domain"`
-	AutoMapOrganization bool  `mapstructure:"auto_map_organization"`
+	// Controller authentication configuration
+	ControllerEmail string `mapstructure:"controller_email"`
 
 	// Pub/Sub configuration
 	StatusTopic        string `mapstructure:"status_topic"`
@@ -48,7 +46,7 @@ type Config struct {
 	TemplateTimeout time.Duration `mapstructure:"template_timeout"`
 
 	// SDK configuration (derived from above)
-	SDKConfig controllersdk.Config
+	SDKConfig sdk.Config
 }
 
 // Load loads configuration from environment variables and config file
@@ -106,9 +104,7 @@ func bindEnvVars(v *viper.Viper) {
 		"controller_name":       "CONTROLLER_NAME",
 		"project_id":           "PROJECT_ID",
 		"api_base_url":         "API_BASE_URL",
-		"organization_id":      "ORGANIZATION_ID",
-		"organization_domain":  "ORGANIZATION_DOMAIN",
-		"auto_map_organization": "AUTO_MAP_ORGANIZATION",
+		"controller_email":     "CONTROLLER_EMAIL",
 		"status_topic":         "STATUS_TOPIC",
 		"events_subscription":  "EVENTS_SUBSCRIPTION",
 		"pubsub_emulator_host": "PUBSUB_EMULATOR_HOST",
@@ -168,7 +164,12 @@ func (c *Config) validate() error {
 
 // buildSDKConfig builds the SDK configuration from controller config
 func (c *Config) buildSDKConfig() {
-	c.SDKConfig = controllersdk.Config{
+	// Set default controller email if not provided
+	if c.ControllerEmail == "" {
+		c.ControllerEmail = "controller@system.local"
+	}
+
+	c.SDKConfig = sdk.Config{
 		ProjectID:           c.ProjectID,
 		ControllerName:      c.ControllerName,
 		StatusTopic:         c.StatusTopic,
@@ -180,13 +181,7 @@ func (c *Config) buildSDKConfig() {
 		HealthCheckInterval: c.HealthCheckInterval,
 		APIBaseURL:          c.APIBaseURL,
 		APITimeout:          c.APITimeout,
-		OrganizationID:      c.OrganizationID,
-		OrganizationDomain:  c.OrganizationDomain,
-		AutoMapOrganization: c.AutoMapOrganization,
+		ControllerEmail:     c.ControllerEmail,
 	}
 }
 
-// GetOrganizationID returns the organization ID to use for API calls
-func (c *Config) GetOrganizationID() string {
-	return c.SDKConfig.GetOrganizationID()
-}
