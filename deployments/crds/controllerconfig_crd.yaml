@@ -1,0 +1,265 @@
+apiVersion: apiextensions.k8s.io/v1
+kind: CustomResourceDefinition
+metadata:
+  name: controllerconfigs.cls.redhat.com
+  annotations:
+    controller-gen.kubebuilder.io/version: v0.13.0
+spec:
+  group: cls.redhat.com
+  names:
+    kind: ControllerConfig
+    listKind: ControllerConfigList
+    plural: controllerconfigs
+    singular: controllerconfig
+  scope: Namespaced
+  versions:
+  - name: v1alpha1
+    served: true
+    storage: true
+    schema:
+      openAPIV3Schema:
+        type: object
+        properties:
+          apiVersion:
+            description: 'APIVersion defines the versioned schema of this representation
+              of an object. Servers should convert recognized schemas to the latest
+              internal value, and may reject unrecognized values.'
+            type: string
+          kind:
+            description: 'Kind is a string value representing the REST resource this
+              object represents. Servers may infer this from the endpoint the client
+              submits requests to.'
+            type: string
+          metadata:
+            type: object
+          spec:
+            description: ControllerConfigSpec defines the desired state of a controller
+            type: object
+            required:
+            - name
+            - resources
+            properties:
+              name:
+                description: Name is the controller name
+                type: string
+              description:
+                description: Description describes what this controller does
+                type: string
+              target:
+                description: Target configures where resources are created
+                type: object
+                properties:
+                  type:
+                    description: 'Type specifies the target type: "kube-api" or "maestro"'
+                    type: string
+                    default: "kube-api"
+                    enum:
+                    - "kube-api"
+                    - "maestro"
+                  authMethod:
+                    description: 'AuthMethod specifies authentication method: "kubeconfig" or "workload-identity"'
+                    type: string
+                    default: "kubeconfig"
+                    enum:
+                    - "kubeconfig"
+                    - "workload-identity"
+                  secretRef:
+                    description: 'SecretRef references a secret containing authentication data. For kubeconfig: secret should contain "kubeconfig" key. For workload-identity: secret should contain "endpoint" key'
+                    type: object
+                    required:
+                    - name
+                    properties:
+                      name:
+                        description: Name is the name of the secret
+                        type: string
+                      key:
+                        description: Key is the key within the secret containing the data (optional for convention-based keys)
+                        type: string
+                  kubeConfig:
+                    description: 'KubeConfig configures remote Kubernetes API access (DEPRECATED: use AuthMethod + SecretRef)'
+                    type: object
+                    properties:
+                      secretRef:
+                        description: SecretRef references the secret containing kubeconfig
+                        type: object
+                        required:
+                        - name
+                        - key
+                        properties:
+                          name:
+                            description: Name is the name of the secret
+                            type: string
+                          key:
+                            description: Key is the key within the secret containing the data
+                            type: string
+                    required:
+                    - secretRef
+                  maestroConfig:
+                    description: MaestroConfig configures Maestro API access
+                    type: object
+                    required:
+                    - endpoint
+                    - consumer
+                    properties:
+                      endpoint:
+                        description: Endpoint is the templated maestro gRPC endpoint
+                        type: string
+                      consumer:
+                        description: Consumer is the templated maestro consumer ID
+                        type: string
+              preconditions:
+                description: Preconditions define conditions that must be met for resource creation
+                type: array
+                items:
+                  description: PreconditionRule defines a condition that must be met
+                  type: object
+                  required:
+                  - field
+                  - operator
+                  properties:
+                    field:
+                      description: Field is the cluster field path (e.g., 'spec.provider', 'status.assignedConsumer')
+                      type: string
+                    operator:
+                      description: Operator is the comparison operator
+                      type: string
+                      enum:
+                      - eq
+                      - ne
+                      - in
+                      - notin
+                      - exists
+                      - notexists
+                    value:
+                      description: Value is the value to compare against (optional for exists/notexists)
+                      type: object
+                      x-kubernetes-preserve-unknown-fields: true
+              resources:
+                description: Resources defines the Kubernetes resources to create
+                type: array
+                items:
+                  description: ResourceConfig defines a Kubernetes resource to create
+                  type: object
+                  required:
+                  - name
+                  - template
+                  properties:
+                    name:
+                      description: Name is a unique name for this resource within the controller
+                      type: string
+                    description:
+                      description: Description describes what this resource does
+                      type: string
+                    template:
+                      description: Template is the Kubernetes resource YAML template
+                      type: string
+                    resourceManagement:
+                      description: ResourceManagement defines resource-specific management policies
+                      type: object
+                      properties:
+                        updateStrategy:
+                          description: UpdateStrategy defines how to handle resource updates
+                          type: string
+                          default: "in_place"
+                          enum:
+                          - in_place
+                          - versioned
+                        versionInterval:
+                          description: VersionInterval defines minimum time between creating new versions (only applies when updateStrategy is 'versioned'). New versions are only created if this interval has elapsed since the last version, unless generation changes
+                          type: string
+                          default: "5m"
+                        newGenerationOnly:
+                          description: NewGenerationOnly when set to true ensures new versioned resources are only created when the cluster generation changes, ignoring the versionInterval time-based constraint
+                          type: boolean
+                          default: false
+                        keepVersions:
+                          description: KeepVersions defines how many completed versions to keep for versioned resources. Older completed versions beyond this count will be deleted automatically
+                          type: integer
+                          default: 2
+              statusConditions:
+                description: StatusConditions define how to report status to cls-backend
+                type: array
+                items:
+                  description: StatusConditionConfig defines a status condition to report
+                  type: object
+                  required:
+                  - name
+                  - status
+                  - reason
+                  - message
+                  properties:
+                    name:
+                      description: Name is the condition name (e.g., 'Ready', 'Progressing', 'Available')
+                      type: string
+                    status:
+                      description: Status is a template expression for condition status (True/False/Unknown)
+                      type: string
+                    reason:
+                      description: Reason is a template expression for condition reason
+                      type: string
+                    message:
+                      description: Message is a template expression for condition message
+                      type: string
+          status:
+            description: ControllerConfigStatus defines the observed state of a controller configuration
+            type: object
+            properties:
+              phase:
+                description: Phase indicates the overall status of the controller configuration
+                type: string
+                enum:
+                - Valid
+                - Invalid
+              message:
+                description: Message provides additional status information
+                type: string
+              conditions:
+                description: Conditions represent the latest available observations of the controller config state
+                type: array
+                items:
+                  description: "Condition contains details for one aspect of the current state of this API Resource."
+                  type: object
+                  required:
+                  - lastTransitionTime
+                  - message
+                  - reason
+                  - status
+                  - type
+                  properties:
+                    lastTransitionTime:
+                      description: lastTransitionTime is the last time the condition transitioned from one status to another.
+                      type: string
+                      format: date-time
+                    message:
+                      description: message is a human readable message indicating details about the transition.
+                      type: string
+                      maxLength: 32768
+                    observedGeneration:
+                      description: observedGeneration represents the .metadata.generation that the condition was set based upon.
+                      type: integer
+                      format: int64
+                      minimum: 0
+                    reason:
+                      description: reason contains a programmatic identifier indicating the reason for the condition's last transition.
+                      type: string
+                      maxLength: 1024
+                      minLength: 1
+                      pattern: ^[A-Za-z]([A-Za-z0-9_,:]*[A-Za-z0-9_])?$
+                    status:
+                      description: status of the condition, one of True, False, Unknown.
+                      type: string
+                      enum:
+                      - "True"
+                      - "False"
+                      - "Unknown"
+                    type:
+                      description: type of condition in CamelCase or in foo.example.com/CamelCase.
+                      type: string
+                      maxLength: 316
+                      pattern: ^([a-z0-9]([-a-z0-9]*[a-z0-9])?(\.[a-z0-9]([-a-z0-9]*[a-z0-9])?)*/)?(([A-Za-z0-9][-A-Za-z0-9_.]*)?[A-Za-z0-9])$
+              observedGeneration:
+                description: ObservedGeneration reflects the generation of the most recently observed ControllerConfig
+                type: integer
+                format: int64
+    subresources:
+      status: {}

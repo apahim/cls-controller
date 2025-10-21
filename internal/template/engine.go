@@ -11,7 +11,7 @@ import (
 	"time"
 
 	"github.com/apahim/cls-controller/internal/crd"
-	controllersdk "github.com/apahim/controller-sdk"
+	"github.com/apahim/cls-controller/internal/sdk"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"sigs.k8s.io/yaml"
@@ -81,7 +81,7 @@ func (e *Engine) CompileTemplates(config *crd.ControllerConfig) error {
 }
 
 // RenderResource renders a Kubernetes resource from a template
-func (e *Engine) RenderResource(resourceName string, cluster *controllersdk.Cluster, resources map[string]*unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func (e *Engine) RenderResource(resourceName string, cluster *sdk.Cluster, resources map[string]*unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	tmpl, exists := e.templates[resourceName]
 	if !exists {
 		return nil, fmt.Errorf("template not found for resource: %s", resourceName)
@@ -113,7 +113,7 @@ func (e *Engine) RenderResource(resourceName string, cluster *controllersdk.Clus
 }
 
 // RenderStatusCondition renders a status condition template
-func (e *Engine) RenderStatusCondition(conditionName string, cluster *controllersdk.Cluster, resources map[string]*unstructured.Unstructured) (status, reason, message string, err error) {
+func (e *Engine) RenderStatusCondition(conditionName string, cluster *sdk.Cluster, resources map[string]*unstructured.Unstructured) (status, reason, message string, err error) {
 	context := e.buildTemplateContext(cluster, resources)
 	conditionKey := fmt.Sprintf("status_%s", conditionName)
 
@@ -166,7 +166,7 @@ func (e *Engine) renderStringTemplate(tmpl *template.Template, context interface
 }
 
 // buildTemplateContext builds the context object for template rendering
-func (e *Engine) buildTemplateContext(cluster *controllersdk.Cluster, resources map[string]*unstructured.Unstructured) map[string]interface{} {
+func (e *Engine) buildTemplateContext(cluster *sdk.Cluster, resources map[string]*unstructured.Unstructured) map[string]interface{} {
 	context := map[string]interface{}{
 		"cluster":   e.buildClusterContext(cluster),
 		"resources": e.buildResourcesContext(resources),
@@ -180,12 +180,11 @@ func (e *Engine) buildTemplateContext(cluster *controllersdk.Cluster, resources 
 }
 
 // buildClusterContext builds the cluster context from the cluster spec
-func (e *Engine) buildClusterContext(cluster *controllersdk.Cluster) map[string]interface{} {
+func (e *Engine) buildClusterContext(cluster *sdk.Cluster) map[string]interface{} {
 	clusterCtx := map[string]interface{}{
-		"id":                 cluster.ID,
-		"name":               cluster.Name,
-		"organization_domain": cluster.OrganizationDomain,
-		"generation":         cluster.Generation,
+		"id":         cluster.ID,
+		"name":       cluster.Name,
+		"generation": cluster.Generation,
 	}
 
 	// Parse spec JSON to make it accessible in templates

@@ -10,7 +10,7 @@ import (
 
 	"github.com/apahim/cls-controller/internal/crd"
 	"github.com/apahim/cls-controller/internal/client"
-	controllersdk "github.com/apahim/controller-sdk"
+	"github.com/apahim/cls-controller/internal/sdk"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
@@ -18,7 +18,7 @@ import (
 )
 
 // evaluatePreconditions checks if cluster meets all preconditions
-func (c *Controller) evaluatePreconditions(cluster *controllersdk.Cluster) bool {
+func (c *Controller) evaluatePreconditions(cluster *sdk.Cluster) bool {
 	if c.controllerConfig == nil || len(c.controllerConfig.Spec.Preconditions) == 0 {
 		return true // No preconditions means always pass
 	}
@@ -26,10 +26,9 @@ func (c *Controller) evaluatePreconditions(cluster *controllersdk.Cluster) bool 
 	// Parse cluster spec for field evaluation
 	var clusterData map[string]interface{}
 	clusterData = map[string]interface{}{
-		"id":                 cluster.ID,
-		"name":               cluster.Name,
-		"organization_domain": cluster.OrganizationDomain,
-		"generation":         cluster.Generation,
+		"id":         cluster.ID,
+		"name":       cluster.Name,
+		"generation": cluster.Generation,
 	}
 
 	// Add parsed spec
@@ -166,12 +165,12 @@ func (c *Controller) valueInArray(value interface{}, array []interface{}) bool {
 }
 
 // reportPreconditionFailure reports when preconditions are not met
-func (c *Controller) reportPreconditionFailure(event *controllersdk.ClusterEvent, cluster *controllersdk.Cluster) error {
+func (c *Controller) reportPreconditionFailure(event *sdk.ClusterEvent, cluster *sdk.Cluster) error {
 	failedPreconditions := c.getFailedPreconditions(cluster)
 
-	update := controllersdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
+	update := sdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
 
-	update.AddCondition(controllersdk.NewCondition(
+	update.AddCondition(sdk.NewCondition(
 		"Applied",
 		"False",
 		"PreconditionsNotMet",
@@ -182,7 +181,7 @@ func (c *Controller) reportPreconditionFailure(event *controllersdk.ClusterEvent
 }
 
 // getFailedPreconditions returns a list of failed precondition descriptions
-func (c *Controller) getFailedPreconditions(cluster *controllersdk.Cluster) []string {
+func (c *Controller) getFailedPreconditions(cluster *sdk.Cluster) []string {
 	var failed []string
 
 	if c.controllerConfig == nil {
@@ -192,10 +191,9 @@ func (c *Controller) getFailedPreconditions(cluster *controllersdk.Cluster) []st
 	// Parse cluster data
 	var clusterData map[string]interface{}
 	clusterData = map[string]interface{}{
-		"id":                 cluster.ID,
-		"name":               cluster.Name,
-		"organization_domain": cluster.OrganizationDomain,
-		"generation":         cluster.Generation,
+		"id":         cluster.ID,
+		"name":       cluster.Name,
+		"generation": cluster.Generation,
 	}
 
 	var spec map[string]interface{}
@@ -245,32 +243,57 @@ func (c *Controller) describePreconditionFailure(data map[string]interface{}, ru
 }
 
 // getOrCreateAllResources creates or updates all resources defined in the controller configuration
-func (c *Controller) getOrCreateAllResources(cluster *controllersdk.Cluster) (map[string]*unstructured.Unstructured, error) {
+func (c *Controller) getOrCreateAllResources(cluster *sdk.Cluster) (map[string]*unstructured.Unstructured, error) {
 	if c.controllerConfig == nil {
 		return nil, fmt.Errorf("no controller configuration loaded")
 	}
 
-	ctx := context.Background()
+	// Create context with timeout for resource operations
+	ctx, cancel := context.WithTimeout(context.Background(), 120*time.Second) // 2 minutes for all operations
+	defer cancel()
 	resources := make(map[string]*unstructured.Unstructured)
 
 	// Get the appropriate client for this target
+	c.logger.Debug("Getting client for target cluster",
+		zap.String("cluster_id", cluster.ID),
+		zap.Duration("timeout", 120*time.Second),
+	)
 	resourceClient, err := c.clientManager.GetClient(ctx, c.controllerConfig.Spec.Target, cluster)
 	if err != nil {
+		c.logger.Error("Failed to get resource client",
+			zap.String("cluster_id", cluster.ID),
+			zap.Error(err),
+		)
 		return nil, fmt.Errorf("failed to get resource client: %w", err)
 	}
+	c.logger.Debug("Successfully obtained resource client",
+		zap.String("cluster_id", cluster.ID),
+	)
 
 	// Process each resource
 	for _, resourceConfig := range c.controllerConfig.Spec.Resources {
+		c.logger.Debug("Processing resource",
+			zap.String("resource_name", resourceConfig.Name),
+			zap.String("cluster_id", cluster.ID),
+		)
+
 		resource, err := c.getOrCreateResource(ctx, resourceClient, resourceConfig, cluster, resources)
 		if err != nil {
+			c.logger.Error("Failed to process resource",
+				zap.String("resource_name", resourceConfig.Name),
+				zap.String("cluster_id", cluster.ID),
+				zap.Error(err),
+				zap.String("note", "Check network connectivity to remote cluster if timeout"),
+			)
 			return nil, fmt.Errorf("failed to create resource %s: %w", resourceConfig.Name, err)
 		}
 		resources[resourceConfig.Name] = resource
 
-		c.logger.Debug("Resource processed",
+		c.logger.Info("Resource processed successfully",
 			zap.String("resource_name", resourceConfig.Name),
 			zap.String("kind", resource.GetKind()),
 			zap.String("name", resource.GetName()),
+			zap.String("cluster_id", cluster.ID),
 		)
 	}
 
@@ -278,7 +301,7 @@ func (c *Controller) getOrCreateAllResources(cluster *controllersdk.Cluster) (ma
 }
 
 // getOrCreateResource creates or updates a single resource
-func (c *Controller) getOrCreateResource(ctx context.Context, resourceClient client.ResourceClient, resourceConfig crd.ResourceConfig, cluster *controllersdk.Cluster, existingResources map[string]*unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func (c *Controller) getOrCreateResource(ctx context.Context, resourceClient client.ResourceClient, resourceConfig crd.ResourceConfig, cluster *sdk.Cluster, existingResources map[string]*unstructured.Unstructured) (*unstructured.Unstructured, error) {
 	// Render the resource template
 	resource, err := c.templateEngine.RenderResource(resourceConfig.Name, cluster, existingResources)
 	if err != nil {
@@ -350,7 +373,7 @@ func (c *Controller) getOrUpdateInPlaceResource(ctx context.Context, resourceCli
 }
 
 // getOrCreateVersionedResource handles versioned resource creation following DESIGN.md pattern with time-based intervals
-func (c *Controller) getOrCreateVersionedResource(ctx context.Context, resourceClient client.ResourceClient, resourceConfig crd.ResourceConfig, resource *unstructured.Unstructured, cluster *controllersdk.Cluster) (*unstructured.Unstructured, error) {
+func (c *Controller) getOrCreateVersionedResource(ctx context.Context, resourceClient client.ResourceClient, resourceConfig crd.ResourceConfig, resource *unstructured.Unstructured, cluster *sdk.Cluster) (*unstructured.Unstructured, error) {
 	// 1. Cleanup old generation resources first
 	if err := c.cleanupOldGenerations(ctx, resourceClient, cluster.ID, cluster.Generation, resource.GetKind(), resource.GetNamespace()); err != nil {
 		c.logger.Warn("Failed to cleanup old generations", zap.Error(err))
@@ -447,7 +470,7 @@ func (c *Controller) needsUpdate(existing, desired *unstructured.Unstructured) b
 }
 
 // evaluateAndReportStatus evaluates resource status and reports to cls-backend
-func (c *Controller) evaluateAndReportStatus(event *controllersdk.ClusterEvent, cluster *controllersdk.Cluster, resources map[string]*unstructured.Unstructured) error {
+func (c *Controller) evaluateAndReportStatus(event *sdk.ClusterEvent, cluster *sdk.Cluster, resources map[string]*unstructured.Unstructured) error {
 	c.logger.Info("Starting status evaluation and reporting",
 		zap.String("cluster_id", event.ClusterID),
 		zap.Int("resource_count", len(resources)),
@@ -505,10 +528,10 @@ func (c *Controller) evaluateAndReportStatus(event *controllersdk.ClusterEvent, 
 		}
 	}
 
-	update := controllersdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
+	update := sdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
 
 	// Add default Applied condition
-	update.AddCondition(controllersdk.NewCondition(
+	update.AddCondition(sdk.NewCondition(
 		"Applied",
 		"True",
 		"ResourcesCreated",
@@ -526,7 +549,7 @@ func (c *Controller) evaluateAndReportStatus(event *controllersdk.ClusterEvent, 
 			continue
 		}
 
-		update.AddCondition(controllersdk.NewCondition(
+		update.AddCondition(sdk.NewCondition(
 			conditionConfig.Name,
 			status,
 			reason,

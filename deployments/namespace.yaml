@@ -1,8 +1,0 @@
-apiVersion: v1
-kind: Namespace
-metadata:
-  name: cls-system
-  labels:
-    name: cls-system
-    app.kubernetes.io/name: cls-system
-    app.kubernetes.io/component: controller-system

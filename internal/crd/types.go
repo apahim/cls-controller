@@ -47,7 +47,18 @@ type TargetConfig struct {
 	// +kubebuilder:default="kube-api"
 	Type string `json:"type,omitempty"`
 
-	// KubeConfig configures remote Kubernetes API access
+	// AuthMethod specifies authentication method: "kubeconfig" or "workload-identity"
+	// +kubebuilder:default="kubeconfig"
+	// +optional
+	AuthMethod string `json:"authMethod,omitempty"`
+
+	// SecretRef references a secret containing authentication data
+	// For kubeconfig: secret should contain "kubeconfig" key
+	// For workload-identity: secret should contain "endpoint" key
+	// +optional
+	SecretRef *SecretReference `json:"secretRef,omitempty"`
+
+	// KubeConfig configures remote Kubernetes API access (DEPRECATED: use AuthMethod + SecretRef)
 	// +optional
 	KubeConfig *KubeConfigReference `json:"kubeConfig,omitempty"`
 
@@ -199,6 +210,12 @@ const (
 const (
 	TargetTypeKubeAPI = "kube-api"
 	TargetTypeMaestro = "maestro"
+)
+
+// Constants for authentication methods
+const (
+	AuthMethodKubeConfig      = "kubeconfig"
+	AuthMethodWorkloadIdentity = "workload-identity"
 )
 
 // Constants for status phases

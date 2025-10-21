@@ -25,11 +25,9 @@ var (
 )
 
 func main() {
-	var configFile string
 	var kubeconfigPath string
 	var controllerName string
 
-	flag.StringVar(&configFile, "config", "", "Path to controller configuration file")
 	flag.StringVar(&kubeconfigPath, "kubeconfig-path", "", "Path to kubeconfig file")
 	flag.StringVar(&controllerName, "controller-name", "", "Name of the controller instance")
 	flag.Parse()
@@ -47,8 +45,8 @@ func main() {
 		zap.String("build_time", BuildTime),
 	)
 
-	// Load configuration
-	cfg, err := config.Load(configFile)
+	// Load configuration from environment variables
+	cfg, err := config.Load()
 	if err != nil {
 		logger.Fatal("Failed to load configuration", zap.Error(err))
 	}

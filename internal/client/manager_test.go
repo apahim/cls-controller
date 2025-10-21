@@ -5,7 +5,7 @@ import (
 	"testing"
 
 	"github.com/apahim/cls-controller/internal/crd"
-	controllersdk "github.com/apahim/controller-sdk"
+	"github.com/apahim/cls-controller/internal/sdk"
 	"go.uber.org/zap"
 	corev1 "k8s.io/api/core/v1"
 	metav1 "k8s.io/apimachinery/pkg/apis/meta/v1"
@@ -54,7 +54,7 @@ func TestManager_GetClient_LocalTarget(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	cluster := &controllersdk.Cluster{ID: "test-cluster"}
+	cluster := &sdk.Cluster{ID: "test-cluster"}
 
 	// Test nil target (should use local client)
 	client, err := manager.GetClient(ctx, nil, cluster)
@@ -101,7 +101,7 @@ func TestManager_GetClient_UnsupportedTarget(t *testing.T) {
 	}
 
 	ctx := context.Background()
-	cluster := &controllersdk.Cluster{ID: "test-cluster"}
+	cluster := &sdk.Cluster{ID: "test-cluster"}
 
 	// Test unsupported target type
 	target := &crd.TargetConfig{
@@ -384,7 +384,7 @@ func TestManager_GetClient_RemoteTarget_SecretNotFound(t *testing.T) {
 	manager.SetSecretNamespace("test-namespace")
 
 	ctx := context.Background()
-	cluster := &controllersdk.Cluster{ID: "test-cluster"}
+	cluster := &sdk.Cluster{ID: "test-cluster"}
 
 	// Test remote target with secret not found
 	target := &crd.TargetConfig{
@@ -439,7 +439,7 @@ func TestManager_ClientCaching(t *testing.T) {
 	manager.SetSecretNamespace("test-namespace")
 
 	ctx := context.Background()
-	cluster := &controllersdk.Cluster{ID: "test-cluster"}
+	cluster := &sdk.Cluster{ID: "test-cluster"}
 
 	target := &crd.TargetConfig{
 		Type: crd.TargetTypeKubeAPI,
@@ -578,4 +578,67 @@ func containsSubstring(s, substr string) bool {
 		}
 	}
 	return false
+}
+
+func TestManager_GetClient_NewStructureLocalTarget(t *testing.T) {
+	logger := zap.NewNop()
+	fakeClient := fake.NewClientBuilder().Build()
+
+	manager, err := NewManager(fakeClient, logger)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	ctx := context.Background()
+	cluster := &sdk.Cluster{ID: "test-cluster"}
+
+	// Test new structure without SecretRef (should use local client)
+	target := &crd.TargetConfig{
+		Type: crd.TargetTypeKubeAPI,
+	}
+	client, err := manager.GetClient(ctx, target, cluster)
+	if err != nil {
+		t.Fatalf("Failed to get local client with new structure: %v", err)
+	}
+
+	if client == nil {
+		t.Fatal("Expected client, got nil")
+	}
+}
+
+func TestManager_GetClient_WorkloadIdentityStructure(t *testing.T) {
+	logger := zap.NewNop()
+	fakeClient := fake.NewClientBuilder().Build()
+
+	manager, err := NewManager(fakeClient, logger)
+	if err != nil {
+		t.Fatalf("Failed to create manager: %v", err)
+	}
+
+	ctx := context.Background()
+	cluster := &sdk.Cluster{ID: "test-cluster"}
+
+	// Test Workload Identity structure (should fail without secret, but should recognize the auth method)
+	target := &crd.TargetConfig{
+		Type:       crd.TargetTypeKubeAPI,
+		AuthMethod: crd.AuthMethodWorkloadIdentity,
+		SecretRef: &crd.SecretReference{
+			Name: "nonexistent-secret",
+		},
+	}
+
+	client, err := manager.GetClient(ctx, target, cluster)
+	if err == nil {
+		t.Fatal("Expected error for nonexistent secret with Workload Identity")
+	}
+
+	if client != nil {
+		t.Fatal("Expected nil client for failed Workload Identity auth")
+	}
+
+	// Error should be related to getting cluster info from secret
+	expectedErrorSubstring := "failed to get cluster info"
+	if !contains(err.Error(), expectedErrorSubstring) {
+		t.Fatalf("Expected error containing %q, got %q", expectedErrorSubstring, err.Error())
+	}
 }

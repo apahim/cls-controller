@@ -49,8 +49,8 @@ type Config struct {
 	SDKConfig sdk.Config
 }
 
-// Load loads configuration from environment variables and config file
-func Load(configFile string) (*Config, error) {
+// Load loads configuration from environment variables
+func Load() (*Config, error) {
 	cfg := &Config{
 		// Default values
 		MetricsAddr:           ":8080",
@@ -73,14 +73,6 @@ func Load(configFile string) (*Config, error) {
 
 	// Bind environment variables
 	bindEnvVars(v)
-
-	// Load config file if provided
-	if configFile != "" {
-		v.SetConfigFile(configFile)
-		if err := v.ReadInConfig(); err != nil {
-			return nil, fmt.Errorf("failed to read config file: %w", err)
-		}
-	}
 
 	// Unmarshal configuration
 	if err := v.Unmarshal(cfg); err != nil {

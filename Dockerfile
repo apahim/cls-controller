@@ -1,20 +1,21 @@
 # Build stage
 FROM golang:1.21-alpine AS builder
 
-# Install git and ca-certificates (for pulling dependencies and HTTPS)
+# Install git and ca-certificates
 RUN apk add --no-cache git ca-certificates tzdata
 
 # Set working directory
 WORKDIR /workspace
 
-# Copy the entire project structure to handle local dependencies
-COPY . .
+# Copy cls-controller
+COPY cls-controller/ cls-controller/
 
-# Copy cls-controller-sdk from parent directory (this needs to be in build context)
-COPY ../cls-controller-sdk ./cls-controller-sdk
+# Set working directory to cls-controller
+WORKDIR /workspace/cls-controller
 
-# Download dependencies
+# Download dependencies and fix missing go.sum entries
 RUN go mod download
+RUN go mod tidy
 
 # Build the controller
 RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
@@ -23,18 +24,14 @@ RUN CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
     -o controller \
     cmd/controller/main.go
 
-# Final stage
-FROM scratch
+# Final stage - using distroless for better CA certificate support
+FROM gcr.io/distroless/static:nonroot
 
-# Import ca-certificates from builder
-COPY --from=builder /etc/ssl/certs/ca-certificates.crt /etc/ssl/certs/
+# Copy timezone info for any time-based operations
 COPY --from=builder /usr/share/zoneinfo /usr/share/zoneinfo
 
 # Copy the binary
-COPY --from=builder /workspace/controller /controller
+COPY --from=builder /workspace/cls-controller/controller /controller
 
-# Use non-root user
-USER 65534:65534
-
-# Set entrypoint
+# Set entrypoint (distroless/static:nonroot already runs as non-root)
 ENTRYPOINT ["/controller"]

@@ -11,7 +11,6 @@ import (
 	"github.com/apahim/cls-controller/internal/client"
 	"github.com/apahim/cls-controller/internal/sdk"
 	"go.uber.org/zap"
-	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
 	ctrl "sigs.k8s.io/controller-runtime"
@@ -327,149 +326,6 @@ func (c *Controller) reportError(event *sdk.ClusterEvent, reason string, err err
 	return c.sdkClient.ReportStatus(update)
 }
 
-// reportPreconditionFailure reports precondition failure
-func (c *Controller) reportPreconditionFailure(event *sdk.ClusterEvent, cluster *sdk.Cluster) error {
-	update := sdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
-	update.AddCondition(sdk.NewCondition(
-		"Applied",
-		"False",
-		"PreconditionsNotMet",
-		"Controller preconditions not satisfied for this cluster",
-	))
-
-	return c.sdkClient.ReportStatus(update)
-}
-
-// evaluateAndReportStatus evaluates status conditions and reports them
-func (c *Controller) evaluateAndReportStatus(event *sdk.ClusterEvent, cluster *sdk.Cluster, resources map[string]*unstructured.Unstructured) error {
-	c.logger.Info("Starting status evaluation and reporting",
-		zap.String("cluster_id", event.ClusterID),
-		zap.Int("resource_count", len(resources)),
-	)
-
-	if c.controllerConfig == nil {
-		return fmt.Errorf("no controller configuration loaded")
-	}
-
-	ctx := context.Background()
-
-	// Get the appropriate client for refreshing resource status
-	resourceClient, err := c.clientManager.GetClient(ctx, c.controllerConfig.Spec.Target, cluster)
-	if err != nil {
-		c.logger.Warn("Failed to get resource client for status refresh", zap.Error(err))
-		// Continue with cached status if client fails
-	}
-
-	// Refresh resources with current status from Kubernetes
-	refreshedResources := make(map[string]*unstructured.Unstructured)
-	for name, resource := range resources {
-		if resource != nil && resourceClient != nil {
-			// Try to refresh the resource to get current status
-			refreshed := &unstructured.Unstructured{}
-			refreshed.SetGroupVersionKind(resource.GroupVersionKind())
-
-			if err := resourceClient.Get(ctx, resource.GetName(), resource.GetNamespace(), refreshed); err == nil {
-				refreshedResources[name] = refreshed
-				c.logger.Info("Refreshed resource status",
-					zap.String("resource_name", name),
-					zap.String("resource_kind", resource.GetKind()),
-					zap.String("resource_full_name", resource.GetName()),
-				)
-
-				// Log job status specifically for debugging
-				if resource.GetKind() == "Job" {
-					if status, exists, _ := unstructured.NestedMap(refreshed.Object, "status"); exists {
-						c.logger.Info("Job status details",
-							zap.String("job_name", resource.GetName()),
-							zap.Any("status", status),
-						)
-					}
-				}
-			} else {
-				// Use original resource if refresh fails
-				refreshedResources[name] = resource
-				c.logger.Warn("Failed to refresh resource status, using cached",
-					zap.String("resource_name", name),
-					zap.String("resource_full_name", resource.GetName()),
-					zap.Error(err),
-				)
-			}
-		} else {
-			refreshedResources[name] = resource
-		}
-	}
-
-	update := sdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
-
-	// Add default Applied condition
-	update.AddCondition(sdk.NewCondition(
-		"Applied",
-		"True",
-		"ResourcesCreated",
-		fmt.Sprintf("Created %d resources successfully", len(resources)),
-	))
-
-	// Evaluate custom status conditions from ControllerConfig using refreshed resources
-	for _, conditionConfig := range c.controllerConfig.Spec.StatusConditions {
-		status, reason, message, err := c.templateEngine.RenderStatusCondition(conditionConfig.Name, cluster, refreshedResources)
-		if err != nil {
-			c.logger.Error("Failed to render status condition",
-				zap.String("condition", conditionConfig.Name),
-				zap.Error(err),
-			)
-			continue
-		}
-
-		c.logger.Info("Evaluated status condition",
-			zap.String("condition", conditionConfig.Name),
-			zap.String("status", status),
-			zap.String("reason", reason),
-			zap.String("message", message),
-		)
-
-		update.AddCondition(sdk.NewCondition(
-			conditionConfig.Name,
-			status,
-			reason,
-			message,
-		))
-	}
-
-	// Add resource status metadata using refreshed resources
-	resourceStatuses := make(map[string]interface{})
-	for name, resource := range refreshedResources {
-		if resource != nil {
-			resourceStatus := map[string]interface{}{
-				"status": "Created",
-			}
-
-			// Add current resource status from Kubernetes
-			if status, exists, _ := unstructured.NestedMap(resource.Object, "status"); exists {
-				resourceStatus["resource_status"] = status
-			}
-
-			resourceStatuses[name] = resourceStatus
-		}
-	}
-
-	update.SetMetadata("resources", resourceStatuses)
-
-	c.logger.Info("Publishing status update to cls-backend",
-		zap.String("cluster_id", event.ClusterID),
-		zap.Int("condition_count", len(update.Conditions)),
-	)
-
-	err = c.sdkClient.ReportStatus(update)
-	if err != nil {
-		c.logger.Error("Failed to publish status update", zap.Error(err))
-		return err
-	}
-
-	c.logger.Info("Status update published successfully",
-		zap.String("cluster_id", event.ClusterID),
-	)
-	return nil
-}
 
 // GetScheme returns the runtime scheme with our CRDs registered
 func GetScheme() *runtime.Scheme {
@@ -482,16 +338,3 @@ func GetScheme() *runtime.Scheme {
 	return scheme
 }
 
-// evaluatePreconditions evaluates whether this controller should act on a cluster
-// Note: These methods would need to be imported from the existing controller implementation
-// For now, placeholder implementations
-func (c *Controller) evaluatePreconditions(cluster *sdk.Cluster) bool {
-	// TODO: Import actual implementation
-	return true
-}
-
-// getOrCreateAllResources creates/updates all resources for a cluster
-func (c *Controller) getOrCreateAllResources(cluster *sdk.Cluster) (map[string]*unstructured.Unstructured, error) {
-	// TODO: Import actual implementation
-	return make(map[string]*unstructured.Unstructured), nil
-}

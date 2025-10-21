@@ -1853,7 +1853,7 @@ type Controller struct {
     resourceTemplates   map[string]*template.Template  // keyed by resource name
 
     // SDK integration
-    sdkClient     *controllersdk.Client
+    sdkClient     *sdk.Client
     k8sClient     client.Client
 
     logger        *zap.Logger
@@ -2297,7 +2297,7 @@ This example demonstrates:
 - **Template Compilation**: Pre-compile Go templates at startup with error handling
 - **Graceful Startup/Shutdown**: Proper lifecycle management with health checks
 
-#### 1.3 cls-controller-sdk Integration
+#### 1.3 Internal SDK Components
 - **Pub/Sub Client**: Subscribe to cluster events with configurable subscriptions
 - **API Client**: cls-backend REST API integration for cluster specs and status reporting
 - **Error Handling**: Retry logic, circuit breakers, and failure recovery
@@ -2453,7 +2453,6 @@ This example demonstrates:
 ### Dependencies and Risks
 
 #### External Dependencies
-- **cls-controller-sdk**: Core SDK for Pub/Sub and API integration
 - **cls-backend API**: Cluster specification and status reporting endpoints
 - **Maestro API**: gRPC client for direct Maestro integration
 - **Config Connector**: For GCP resource management examples

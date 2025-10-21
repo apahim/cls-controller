@@ -7,7 +7,7 @@ CLUSTER_NAME ?= rc-1
 CLUSTER_ZONE ?= us-central1-a
 IMAGE_NAME = cls-controller
 IMAGE_TAG ?= $(shell date +%Y%m%d%H%M%S)
-FULL_IMAGE_NAME = gcr.io/$(PROJECT_ID)/$(IMAGE_NAME):$(IMAGE_TAG)
+FULL_IMAGE_NAME ?= gcr.io/$(PROJECT_ID)/$(IMAGE_NAME):$(IMAGE_TAG)
 LATEST_IMAGE_NAME = gcr.io/$(PROJECT_ID)/$(IMAGE_NAME):latest
 
 # Colors for output
@@ -35,17 +35,7 @@ help: ## Show this help message
 	@echo "  CLUSTER_ZONE:  $(CLUSTER_ZONE)"
 	@echo "  IMAGE_NAME:    $(FULL_IMAGE_NAME)"
 
-dev-setup: ## Set up development environment
-	@echo "$(BLUE)📋 Setting up development environment$(NC)"
-	@if [ ! -d "../cls-controller-sdk" ]; then \
-		echo "$(RED)❌ cls-controller-sdk not found in parent directory$(NC)"; \
-		echo "$(YELLOW)Please ensure ../cls-controller-sdk exists$(NC)"; \
-		exit 1; \
-	fi
-	@go mod download
-	@echo "$(GREEN)✅ Development environment ready$(NC)"
-
-build: dev-setup ## Build the container image with podman
+build: ## Build the container image with podman
 	@echo "$(BLUE)📋 Building container image$(NC)"
 	@echo "Image: $(FULL_IMAGE_NAME)"
 	@echo "$(BLUE)📋 Authenticating with GCR$(NC)"
@@ -54,7 +44,7 @@ build: dev-setup ## Build the container image with podman
 	@cd .. && REGISTRY_AUTH_FILE=/Users/asegundo/.config/containers/auth.json \
 		/opt/podman/bin/podman build \
 		--platform linux/amd64 \
-		-f cls-controller/Dockerfile.build \
+		-f cls-controller/Dockerfile \
 		-t "$(FULL_IMAGE_NAME)" \
 		-t "$(LATEST_IMAGE_NAME)" \
 		.

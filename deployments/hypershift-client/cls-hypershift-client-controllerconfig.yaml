@@ -1,0 +1,96 @@
+# Example: Remote Cluster Management
+# This ControllerConfig creates resources on a remote Kubernetes cluster using a kubeconfig stored in a secret.
+apiVersion: cls.redhat.com/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: cls-hypershift-client
+  namespace: cls-system
+spec:
+  name: "cls-hypershift-client"
+  description: "Creates resources on remote clusters using kubeconfig from secrets"
+  target:
+    type: "kube-api"
+    authMethod: "workload-identity"
+    secretRef:
+      name: "remote-gke-cluster"
+
+  resources:
+    - name: "namespace"
+      description: "Create a dedicated Namespace"
+      resourceManagement:
+        updateStrategy: "in_place"  # Namespaces are mutable
+      template: |
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: "cls-{{.cluster.id}}"
+          labels:
+            cluster-id: "{{.cluster.id}}"
+            cluster-generation: "{{.cluster.generation}}"
+            managed-by: "cls-hypershift-client"
+            remote-target: "true"
+
+#    - name: "hosted-cluster"
+#      description: "Create a Hosted Cluster for Hypershift Operator"
+#      resourceManagement:
+#        updateStrategy: "in_place"
+#      template: |
+#        apiVersion: hypershift.openshift.io/v1beta1
+#        kind: HostedCluster
+#        metadata:
+#          name: "{{.cluster.id}}"
+#          namespace: "cls-{{.cluster.id}}"
+#        spec:
+#          release:
+#            image: quay.io/openshift-release-dev/ocp-release:4.14.0-x86_64
+#          platform:
+#            type: None
+#          pullSecret:
+#            name: pull-secret
+#          sshKey:
+#            name: ssh-key
+#          networking:
+#            clusterNetwork:
+#              - cidr: 10.132.0.0/14
+#            serviceNetwork:
+#              - cidr: 172.31.0.0/16
+#            networkType: OVNKubernetes
+#          services:
+#            - service: APIServer
+#              servicePublishingStrategy:
+#                type: LoadBalancer
+#            - service: OAuthServer
+#              servicePublishingStrategy:
+#                type: NodePort
+#                nodePort:
+#                  address: 0.0.0.0
+#                  port: 30081
+#            - service: Konnectivity
+#              servicePublishingStrategy:
+#                type: LoadBalancer
+#            - service: Ignition
+#              servicePublishingStrategy:
+#                type: NodePort
+#                nodePort:
+#                  address: 0.0.0.0
+#                  port: 30080
+#
+#          infraID: "{{.cluster.id}}"
+#          dns:
+#            baseDomain: example.com
+
+  statusConditions:
+    - name: "Applied"
+      status: "True"
+      reason: "RemoteResourcesCreated"
+      message: "Created remote cluster resources successfully"
+
+    - name: "Available"
+      status: "True"
+      reason: "DeploymentReady"
+      message: "Remote deployment is available"
+
+    - name: "Healthy"
+      status: "True"
+      reason: "AllReplicasReady"
+      message: "All replicas are healthy"
