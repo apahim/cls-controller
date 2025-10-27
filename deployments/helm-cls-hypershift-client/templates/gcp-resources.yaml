@@ -56,6 +56,25 @@ spec:
   member: "serviceAccount:{{ .Values.serviceAccount.gcp }}@{{ .Values.gcp.projectId }}.iam.gserviceaccount.com"
 
 ---
+# Pub/Sub Viewer IAM Policy Member
+# The controller needs pubsub.viewer role to check if subscriptions exist before consuming messages.
+# The pubsub.subscriber role only allows consuming messages but not describing/listing subscriptions.
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: {{ .Values.controller.name }}-pubsub-viewer
+  namespace: {{ .Values.controller.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.controller.name }}
+    app.kubernetes.io/component: iam-policy
+spec:
+  resourceRef:
+    kind: Project
+    external: {{ .Values.gcp.projectId }}
+  role: "roles/pubsub.viewer"
+  member: "serviceAccount:{{ .Values.serviceAccount.gcp }}@{{ .Values.gcp.projectId }}.iam.gserviceaccount.com"
+
+---
 # Workload Identity IAM Policy Member
 apiVersion: iam.cnrm.cloud.google.com/v1beta1
 kind: IAMPolicyMember
