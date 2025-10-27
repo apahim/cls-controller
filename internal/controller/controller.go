@@ -157,7 +157,13 @@ func (c *Controller) HandleClusterEvent(event *sdk.ClusterEvent) error {
 		return nil
 	}
 
-	// Fetch cluster spec from simplified API
+	// Handle deletion events early - deleted clusters can't be fetched from API
+	if event.Type == sdk.EventTypeClusterDeleted {
+		log.Info("Processing cluster deletion event")
+		return c.handleClusterDeleted(event, nil)
+	}
+
+	// Fetch cluster spec from simplified API for non-deletion events
 	ctx := context.Background()
 	apiClient := c.sdkClient.GetAPIClient()
 	if apiClient == nil {
@@ -188,8 +194,6 @@ func (c *Controller) HandleClusterEvent(event *sdk.ClusterEvent) error {
 		return c.handleClusterCreated(event, cluster)
 	case sdk.EventTypeClusterUpdated:
 		return c.handleClusterUpdated(event, cluster)
-	case sdk.EventTypeClusterDeleted:
-		return c.handleClusterDeleted(event, cluster)
 	case sdk.EventTypeClusterReconcile:
 		return c.handleClusterReconcile(event, cluster)
 	default:
@@ -241,21 +245,26 @@ func (c *Controller) handleClusterUpdated(event *sdk.ClusterEvent, cluster *sdk.
 }
 
 // handleClusterDeleted processes cluster deletion events
+// Note: cluster parameter can be nil for deletion events since deleted clusters can't be fetched from API
 func (c *Controller) handleClusterDeleted(event *sdk.ClusterEvent, cluster *sdk.Cluster) error {
 	c.logger.Info("Processing cluster deletion", zap.String("cluster_id", event.ClusterID))
 
-	// For now, just report that deletion was processed
-	// TODO: Implement resource cleanup if needed
+	// Clean up resources created by this controller for the deleted cluster
+	err := c.deleteAllResources(event.ClusterID)
+	if err != nil {
+		c.logger.Error("Failed to clean up resources during cluster deletion",
+			zap.String("cluster_id", event.ClusterID),
+			zap.Error(err),
+		)
+		// Log error but don't fail - cluster is already deleted from cls-backend
+		// We don't want to get stuck in retry loop over cleanup failures
+	}
 
-	update := sdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
-	update.AddCondition(sdk.NewCondition(
-		"Applied",
-		"False",
-		"ClusterDeleted",
-		"Cluster deletion processed",
-	))
+	c.logger.Info("Cluster deletion processed successfully", zap.String("cluster_id", event.ClusterID))
 
-	return c.sdkClient.ReportStatus(update)
+	// Don't report status back to cls-backend - the cluster is already deleted
+	// Just acknowledge the message by returning nil
+	return nil
 }
 
 // handleClusterReconcile processes cluster reconciliation events

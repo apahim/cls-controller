@@ -314,7 +314,7 @@ func (c *Controller) getOrCreateResource(ctx context.Context, resourceClient cli
 	if strategy == crd.UpdateStrategyVersioned {
 		return c.getOrCreateVersionedResource(ctx, resourceClient, resourceConfig, resource, cluster)
 	} else {
-		return c.getOrUpdateInPlaceResource(ctx, resourceClient, resource)
+		return c.getOrUpdateInPlaceResource(ctx, resourceClient, resource, cluster)
 	}
 }
 
@@ -345,14 +345,15 @@ func (c *Controller) isImmutableResourceKind(kind string) bool {
 }
 
 // getOrUpdateInPlaceResource handles in-place resource updates
-func (c *Controller) getOrUpdateInPlaceResource(ctx context.Context, resourceClient client.ResourceClient, resource *unstructured.Unstructured) (*unstructured.Unstructured, error) {
+func (c *Controller) getOrUpdateInPlaceResource(ctx context.Context, resourceClient client.ResourceClient, resource *unstructured.Unstructured, cluster *sdk.Cluster) (*unstructured.Unstructured, error) {
 	// Try to get existing resource
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(resource.GroupVersionKind())
 
 	err := resourceClient.Get(ctx, resource.GetName(), resource.GetNamespace(), existing)
 	if err != nil {
-		// Resource doesn't exist - create it
+		// Resource doesn't exist - create it with standard labels
+		c.addStandardLabels(resource, cluster)
 		if err := resourceClient.Create(ctx, resource); err != nil {
 			return nil, fmt.Errorf("failed to create resource: %w", err)
 		}
@@ -429,6 +430,9 @@ func (c *Controller) getOrCreateVersionedResource(ctx context.Context, resourceC
 		zap.String("cluster_id", cluster.ID),
 		zap.Int64("generation", cluster.Generation),
 	)
+
+	// Add standard labels for cleanup tracking
+	c.addStandardLabels(resource, cluster)
 
 	if err := resourceClient.Create(ctx, resource); err != nil {
 		return nil, fmt.Errorf("failed to create versioned resource: %w", err)
@@ -984,5 +988,226 @@ func (c *Controller) cleanupCompletedVersions(ctx context.Context, resourceClien
 	)
 
 	return nil
+}
+
+// addStandardLabels adds tracking labels to resources for cleanup purposes
+func (c *Controller) addStandardLabels(resource *unstructured.Unstructured, cluster *sdk.Cluster) {
+	labels := resource.GetLabels()
+	if labels == nil {
+		labels = make(map[string]string)
+	}
+
+	// Add cluster ID label for resource identification during cleanup
+	labels["cls.redhat.com/cluster-id"] = cluster.ID
+
+	// Add controller name label for safety (only delete resources we created)
+	if c.config != nil && c.config.ControllerName != "" {
+		labels["cls.redhat.com/controller"] = c.config.ControllerName
+	}
+
+	resource.SetLabels(labels)
+
+	c.logger.Debug("Added standard labels to resource",
+		zap.String("resource_name", resource.GetName()),
+		zap.String("cluster_id", cluster.ID),
+		zap.String("controller", c.config.ControllerName),
+	)
+}
+
+// deleteAllResources deletes all resources created by this controller for a specific cluster
+func (c *Controller) deleteAllResources(clusterID string) error {
+	if c.controllerConfig == nil {
+		c.logger.Warn("No controller configuration loaded, skipping resource cleanup")
+		return nil
+	}
+
+	c.logger.Info("Starting resource cleanup for deleted cluster", zap.String("cluster_id", clusterID))
+
+	// Create context with timeout for deletion operations
+	ctx, cancel := context.WithTimeout(context.Background(), 60*time.Second) // 1 minute for cleanup
+	defer cancel()
+
+	// Create a minimal cluster object for client resolution (we only need the ID)
+	minimalCluster := &sdk.Cluster{ID: clusterID}
+
+	// Get the appropriate client for this target
+	resourceClient, err := c.clientManager.GetClient(ctx, c.controllerConfig.Spec.Target, minimalCluster)
+	if err != nil {
+		c.logger.Error("Failed to get resource client for cleanup",
+			zap.String("cluster_id", clusterID),
+			zap.Error(err),
+		)
+		return fmt.Errorf("failed to get resource client: %w", err)
+	}
+
+	var deletionErrors []error
+
+	// Process each resource for deletion using label-based discovery
+	for _, resourceConfig := range c.controllerConfig.Spec.Resources {
+		c.logger.Debug("Attempting to delete resources by labels",
+			zap.String("resource_name", resourceConfig.Name),
+			zap.String("cluster_id", clusterID),
+		)
+
+		// Extract GroupVersionKind from template (full YAML parsing)
+		gvk, err := c.extractGroupVersionKind(resourceConfig.Template)
+		if err != nil {
+			deletionErrors = append(deletionErrors, err)
+			c.logger.Warn("Failed to extract GroupVersionKind for cleanup",
+				zap.String("resource_name", resourceConfig.Name),
+				zap.String("cluster_id", clusterID),
+				zap.Error(err),
+			)
+			continue
+		}
+
+		// Delete resources using CORRECT GroupVersionKind from template
+		deletedCount, err := c.deleteResourcesByLabels(ctx, resourceClient, gvk, clusterID)
+		if err != nil {
+			deletionErrors = append(deletionErrors, err)
+			c.logger.Warn("Failed to delete resources during cleanup",
+				zap.String("resource_name", resourceConfig.Name),
+				zap.String("group", gvk.Group),
+				zap.String("version", gvk.Version),
+				zap.String("kind", gvk.Kind),
+				zap.String("cluster_id", clusterID),
+				zap.Error(err),
+			)
+			// Continue with other resources even if one fails
+		} else {
+			c.logger.Info("Successfully deleted resources by labels",
+				zap.String("resource_name", resourceConfig.Name),
+				zap.String("group", gvk.Group),
+				zap.String("version", gvk.Version),
+				zap.String("kind", gvk.Kind),
+				zap.String("cluster_id", clusterID),
+				zap.Int("deleted_count", deletedCount),
+			)
+		}
+	}
+
+	if len(deletionErrors) > 0 {
+		c.logger.Warn("Some resource deletions failed during cleanup",
+			zap.String("cluster_id", clusterID),
+			zap.Int("failure_count", len(deletionErrors)),
+		)
+		// Return error summary but this won't cause Pub/Sub retry
+		return fmt.Errorf("failed to delete %d resources during cleanup", len(deletionErrors))
+	}
+
+	c.logger.Info("Resource cleanup completed successfully", zap.String("cluster_id", clusterID))
+	return nil
+}
+
+// extractGroupVersionKind extracts the full GroupVersionKind from a YAML template string
+func (c *Controller) extractGroupVersionKind(template string) (schema.GroupVersionKind, error) {
+	lines := strings.Split(template, "\n")
+	var apiVersion, kind string
+
+	// Parse both apiVersion and kind fields
+	for _, line := range lines {
+		trimmed := strings.TrimSpace(line)
+
+		if strings.HasPrefix(trimmed, "apiVersion:") {
+			parts := strings.SplitN(trimmed, ":", 2)
+			if len(parts) == 2 {
+				apiVersion = strings.TrimSpace(parts[1])
+				apiVersion = strings.Trim(apiVersion, `"'`)
+			}
+		}
+
+		if strings.HasPrefix(trimmed, "kind:") {
+			parts := strings.SplitN(trimmed, ":", 2)
+			if len(parts) == 2 {
+				kind = strings.TrimSpace(parts[1])
+				kind = strings.Trim(kind, `"'`)
+			}
+		}
+	}
+
+	if kind == "" {
+		return schema.GroupVersionKind{}, fmt.Errorf("no 'kind' field found in template")
+	}
+	if apiVersion == "" {
+		return schema.GroupVersionKind{}, fmt.Errorf("no 'apiVersion' field found in template")
+	}
+
+	// Parse apiVersion into group and version
+	group, version := c.parseApiVersion(apiVersion)
+
+	return schema.GroupVersionKind{
+		Group:   group,
+		Version: version,
+		Kind:    kind,
+	}, nil
+}
+
+// parseApiVersion parses an apiVersion string into group and version components
+func (c *Controller) parseApiVersion(apiVersion string) (group, version string) {
+	if !strings.Contains(apiVersion, "/") {
+		return "", apiVersion  // Core API: "v1" → group="", version="v1"
+	}
+	parts := strings.SplitN(apiVersion, "/", 2)
+	if len(parts) == 2 {
+		return parts[0], parts[1]  // Grouped API: "hypershift.openshift.io/v1beta1"
+	}
+	return "", apiVersion  // Fallback
+}
+
+// deleteResourcesByLabels finds and deletes all resources with matching labels
+func (c *Controller) deleteResourcesByLabels(ctx context.Context, resourceClient client.ResourceClient, gvk schema.GroupVersionKind, clusterID string) (int, error) {
+	// Create label selector for resources to delete
+	labelSelector := map[string]string{
+		"cls.redhat.com/cluster-id": clusterID,
+	}
+
+	// Add controller name to selector for safety if available
+	if c.config != nil && c.config.ControllerName != "" {
+		labelSelector["cls.redhat.com/controller"] = c.config.ControllerName
+	}
+
+	c.logger.Debug("Searching for resources to delete",
+		zap.String("group", gvk.Group),
+		zap.String("version", gvk.Version),
+		zap.String("kind", gvk.Kind),
+		zap.String("cluster_id", clusterID),
+		zap.Any("label_selector", labelSelector),
+	)
+
+	// Create resource list with CORRECT GroupVersionKind from template
+	resourceList := &unstructured.UnstructuredList{}
+	resourceList.SetGroupVersionKind(schema.GroupVersionKind{
+		Group:   gvk.Group,
+		Version: gvk.Version,
+		Kind:    gvk.Kind + "List",
+	})
+
+	// List resources with matching labels - use empty namespace to search all namespaces
+	err := resourceClient.List(ctx, "", labelSelector, resourceList)
+	if err != nil {
+		return 0, fmt.Errorf("failed to list resources by labels: %w", err)
+	}
+
+	deletedCount := 0
+	for _, resource := range resourceList.Items {
+		c.logger.Debug("Deleting resource found by labels",
+			zap.String("resource_name", resource.GetName()),
+			zap.String("kind", gvk.Kind),
+			zap.String("namespace", resource.GetNamespace()),
+		)
+
+		err := resourceClient.Delete(ctx, &resource)
+		if err != nil {
+			c.logger.Warn("Failed to delete individual resource",
+				zap.String("resource_name", resource.GetName()),
+				zap.Error(err),
+			)
+			// Continue with other resources - don't fail entirely
+		} else {
+			deletedCount++
+		}
+	}
+
+	return deletedCount, nil
 }
 
