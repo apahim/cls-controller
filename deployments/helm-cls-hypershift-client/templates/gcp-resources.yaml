@@ -7,6 +7,8 @@ kind: IAMServiceAccount
 metadata:
   name: {{ .Values.serviceAccount.gcp }}
   namespace: {{ .Values.controller.namespace }}
+  annotations:
+    cnrm.cloud.google.com/project-id: {{ .Values.gcp.projectId | quote }}
   labels:
     app.kubernetes.io/name: {{ .Values.controller.name }}
     app.kubernetes.io/component: service-account
@@ -22,6 +24,8 @@ kind: PubSubSubscription
 metadata:
   name: {{ .Values.pubsub.subscription }}
   namespace: {{ .Values.controller.namespace }}
+  annotations:
+    cnrm.cloud.google.com/project-id: {{ .Values.gcp.projectId | quote }}
   labels:
     app.kubernetes.io/name: {{ .Values.controller.name }}
     app.kubernetes.io/component: pubsub-subscription
@@ -49,9 +53,7 @@ spec:
     kind: PubSubSubscription
     name: {{ .Values.pubsub.subscription }}
   role: "roles/pubsub.subscriber"
-  memberFrom:
-    serviceAccountRef:
-      name: {{ .Values.serviceAccount.gcp }}
+  member: "serviceAccount:{{ .Values.serviceAccount.gcp }}@{{ .Values.gcp.projectId }}.iam.gserviceaccount.com"
 
 ---
 # Workload Identity IAM Policy Member

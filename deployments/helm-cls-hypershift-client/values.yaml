@@ -10,7 +10,7 @@ controller:
   namespace: "cls-system"
   image:
     repository: "gcr.io/apahim-dev-1/cls-controller"
-    tag: "20251021112102"
+    tag: "latest"
 
   # API Configuration
   api:

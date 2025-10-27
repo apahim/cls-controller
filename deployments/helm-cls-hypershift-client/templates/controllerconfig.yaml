@@ -37,8 +37,8 @@ spec:
     #     apiVersion: hypershift.openshift.io/v1beta1
     #     kind: HostedCluster
     #     metadata:
-    #       name: "{{.cluster.id}}"
-    #       namespace: "cls-{{.cluster.id}}"
+    #       name: "{{`{{.cluster.id}}`}}"
+    #       namespace: "cls-{{`{{.cluster.id}}`}}"
     #     spec:
     #       release:
     #         image: quay.io/openshift-release-dev/ocp-release:4.14.0-x86_64
@@ -74,7 +74,7 @@ spec:
     #               address: 0.0.0.0
     #               port: 30080
 
-    #       infraID: "{{.cluster.id}}"
+    #       infraID: "{{`{{.cluster.id}}`}}"
     #       dns:
     #         baseDomain: example.com
 
