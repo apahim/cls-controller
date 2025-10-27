@@ -1,0 +1,31 @@
+# Simple configuration values for cls-hypershift-client
+
+# GCP Configuration
+gcp:
+  projectId: "apahim-dev-1"
+
+# Controller Configuration
+controller:
+  name: "cls-hypershift-client"
+  namespace: "cls-system"
+  image:
+    repository: "gcr.io/apahim-dev-1/cls-controller"
+    tag: "latest"
+
+  # API Configuration
+  api:
+    baseUrl: "http://cls-backend.cls-system:80/api/v1"
+
+# Pub/Sub Configuration
+pubsub:
+  topic: "cluster-events"
+  subscription: "cluster-events-hypershift-client"
+
+# Service Account Names
+serviceAccount:
+  kubernetes: "cls-hypershift-client"
+  gcp: "cls-hypershift-client-sa"
+
+# Remote cluster configuration
+remoteCluster:
+  secretName: "remote-gke-cluster"
