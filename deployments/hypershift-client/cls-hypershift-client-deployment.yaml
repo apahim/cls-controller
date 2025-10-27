@@ -18,7 +18,7 @@ spec:
       serviceAccountName: cls-hypershift-client
       containers:
       - name: controller
-        image:  gcr.io/apahim-dev-1/cls-controller:20251021112102
+        image:  gcr.io/apahim-dev-1/cls-controller:20251024011711
         imagePullPolicy: Always
         args:
         - --controller-name=cls-hypershift-client
@@ -37,7 +37,7 @@ spec:
         - name: CLS_CONTROLLER_CONTROLLER_NAME
           value: "cls-hypershift-client"
         - name: CLS_CONTROLLER_EVENTS_SUBSCRIPTION
-          value: "cluster-events-hypershift-client"
+          value: "hypershift-client-controller"
         - name: CLS_CONTROLLER_CONFIG_NAMESPACE
           value: "cls-system"
         - name: CLS_CONTROLLER_CONFIG_NAME

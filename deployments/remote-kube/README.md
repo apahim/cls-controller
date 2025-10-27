@@ -20,10 +20,9 @@ gcloud projects add-iam-policy-binding $GCLOUD_PROJECT \
 
 Export Environment Variables:
 ```
-export CLUSTER_NAME="[REGIONAL_CLUSTER]"  # Replace with the Regional Cluster Name
 export SECRET_NAME="[SECRET_NAME]"        # Same name as specified in the ControllerConfig "target.secretRef.name"
 export NAMESPACE="[NAMESPACE]"            # Secret Namespace, usually "cls-system"
-export ENDPOINT="[ENDPOINT]"              # Replace with the Remote Cluster (Management Cluster) DNS Endpoint
+export ENDPOINT="https://[ENDPOINT]"              # Replace with the Remote Cluster (Management Cluster) DNS Endpoint
 ```
 Extract CA certificate directly from the cluster:
 ```
@@ -32,7 +31,7 @@ CA_CERT=$(echo | openssl s_client -servername $(echo $ENDPOINT | cut -d'/' -f3) 
 
 Create the Secret in the Regional Cluster:
 ```
-kubectl create secret generic remote-gke-cluster -n cls-system \
+kubectl create secret generic $SECRET_NAME -n $NAMESPACE \
 --from-literal=endpoint="$ENDPOINT" \
 --from-literal=ca-cert="$CA_CERT" \
 --dry-run=client -o yaml | kubectl apply -f -

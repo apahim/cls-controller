@@ -32,7 +32,7 @@ gcloud pubsub subscriptions add-iam-policy-binding $SUBSCRIPTION_ID \
 
 Add permission for Workload Identity:
 ```
-gcloud iam service-accounts add-iam-policy-binding "IAM_SERVICE_ACCOUNT_NAME@$GCLOUD_PROJECT.iam.gserviceaccount.com" \
+gcloud iam service-accounts add-iam-policy-binding "$IAM_SERVICE_ACCOUNT_NAME@$GCLOUD_PROJECT.iam.gserviceaccount.com" \
  --role="roles/iam.workloadIdentityUser" \
  --member="serviceAccount:$GCLOUD_PROJECT.svc.id.goog[$NAMESPACE/$KUBE_SERVICE_ACCOUNT_NAME]"
 ```
@@ -41,6 +41,6 @@ Annotate the Kubernetes Service Account:
 ```
 kubectl annotate serviceaccount $KUBE_SERVICE_ACCOUNT_NAME \
     --namespace $NAMESPACE \
-    "iam.gke.io/gcp-service-account=$SERVICE_ACCOUNT_NAME@$GCLOUD_PROJECT.iam.gserviceaccount.com"
+    "iam.gke.io/gcp-service-account=$IAM_SERVICE_ACCOUNT_NAME@$GCLOUD_PROJECT.iam.gserviceaccount.com"
 ```
 
