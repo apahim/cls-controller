@@ -9,7 +9,7 @@ controller:
   name: "cls-hypershift-client"
   namespace: "cls-system"
   image:
-    repository: "gcr.io/apahim-dev-1/cls-controller"
+    repository: "quay.io/apahim/cls-controller"
     tag: "latest"
 
   # API Configuration
