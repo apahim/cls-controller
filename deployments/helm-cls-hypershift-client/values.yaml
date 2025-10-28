@@ -24,7 +24,7 @@ pubsub:
 # Service Account Names
 serviceAccount:
   kubernetes: "cls-hypershift-client"
-  gcp: "cls-hypershift-client-sa"
+  gcp: "cls-hypershift-client"
 
 # Remote cluster configuration
 remoteCluster:
