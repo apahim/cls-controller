@@ -21,7 +21,7 @@ spec:
         apiVersion: hypershift.openshift.io/v1beta1
         kind: HostedCluster
         metadata:
-          name: {{ .cluster.name }}
+          name: {{`{{ .cluster.name }}`}}
           namespace: clusters
         spec:
           release:
@@ -69,7 +69,7 @@ spec:
                 nodePort:
                   address: 0.0.0.0
 
-          infraID: {{ .cluster.id }}
+          infraID: {{`{{ .cluster.id }}`}}
 
           dns:
             baseDomain: example.com
@@ -78,157 +78,157 @@ spec:
   statusConditions:
     - name: "Applied"
       status: >-
-        {{- if .resources.hostedcluster -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
         True
-        {{- else -}}
+        {{`{{- else -}}`}}
         False
-        {{- end }}
+        {{`{{- end }}`}}
       reason: >-
-        {{- if .resources.hostedcluster -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
         ResourceCreated
-        {{- else -}}
+        {{`{{- else -}}`}}
         ResourceNotCreated
-        {{- end }}
+        {{`{{- end }}`}}
       message: >-
-        {{- if .resources.hostedcluster -}}
-        HostedCluster {{ .cluster.name }} created successfully
-        {{- else -}}
-        HostedCluster {{ .cluster.name }} not yet created
-        {{- end }}
+        {{`{{- if .resources.hostedcluster -}}`}}
+        HostedCluster {{`{{ .cluster.name }}`}} created successfully
+        {{`{{- else -}}`}}
+        HostedCluster {{`{{ .cluster.name }}`}} not yet created
+        {{`{{- end }}`}}
 
     - name: "Available"
       status: >-
-        {{- if .resources.hostedcluster -}}
-          {{- $found := false -}}
-          {{- range .resources.hostedcluster.status.conditions -}}
-            {{- if eq .type "Available" -}}{{ .status }}{{- $found = true -}}{{- end -}}
-          {{- end -}}
-          {{- if not $found -}}Unknown{{- end -}}
-        {{- else -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.hostedcluster.status.conditions -}}`}}
+            {{`{{- if eq .type "Available" -}}{{ .status }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}Unknown{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
           Unknown
-        {{- end }}
+        {{`{{- end }}`}}
       reason: >-
-        {{- if .resources.hostedcluster -}}
-          {{- $found := false -}}
-          {{- range .resources.hostedcluster.status.conditions -}}
-            {{- if eq .type "Available" -}}{{ .reason }}{{- $found = true -}}{{- end -}}
-          {{- end -}}
-          {{- if not $found -}}ConditionNotFound{{- end -}}
-        {{- else -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.hostedcluster.status.conditions -}}`}}
+            {{`{{- if eq .type "Available" -}}{{ .reason }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}ConditionNotFound{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
           ResourceNotFound
-        {{- end }}
+        {{`{{- end }}`}}
       message: >-
-        {{- if .resources.hostedcluster -}}
-          {{- $found := false -}}
-          {{- range .resources.hostedcluster.status.conditions -}}
-            {{- if eq .type "Available" -}}{{ .message }}{{- $found = true -}}{{- end -}}
-          {{- end -}}
-          {{- if not $found -}}Available condition not yet reported by HostedCluster{{- end -}}
-        {{- else -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.hostedcluster.status.conditions -}}`}}
+            {{`{{- if eq .type "Available" -}}{{ .message }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}Available condition not yet reported by HostedCluster{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
           HostedCluster resource not found or not created yet
-        {{- end }}
+        {{`{{- end }}`}}
 
     - name: "Healthy"
       status: >-
-        {{- if .resources.hostedcluster -}}
-          {{- $found := false -}}
-          {{- range .resources.hostedcluster.status.conditions -}}
-            {{- if eq .type "Degraded" -}}
-              {{- if eq .status "False" -}}True{{- else -}}False{{- end -}}
-              {{- $found = true -}}
-            {{- end -}}
-          {{- end -}}
-          {{- if not $found -}}Unknown{{- end -}}
-        {{- else -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.hostedcluster.status.conditions -}}`}}
+            {{`{{- if eq .type "Degraded" -}}`}}
+              {{`{{- if eq .status "False" -}}`}}True{{`{{- else -}}`}}False{{`{{- end -}}`}}
+              {{`{{- $found = true -}}`}}
+            {{`{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}Unknown{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
           Unknown
-        {{- end }}
+        {{`{{- end }}`}}
       reason: >-
-        {{- if .resources.hostedcluster -}}
-          {{- $found := false -}}
-          {{- range .resources.hostedcluster.status.conditions -}}
-            {{- if eq .type "Degraded" -}}
-              {{- if eq .status "False" -}}NotDegraded{{- else -}}{{ .reason }}{{- end -}}
-              {{- $found = true -}}
-            {{- end -}}
-          {{- end -}}
-          {{- if not $found -}}ConditionNotFound{{- end -}}
-        {{- else -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.hostedcluster.status.conditions -}}`}}
+            {{`{{- if eq .type "Degraded" -}}`}}
+              {{`{{- if eq .status "False" -}}`}}NotDegraded{{`{{- else -}}{{ .reason }}{{- end -}}`}}
+              {{`{{- $found = true -}}`}}
+            {{`{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}ConditionNotFound{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
           ResourceNotFound
-        {{- end }}
+        {{`{{- end }}`}}
       message: >-
-        {{- if .resources.hostedcluster -}}
-          {{- $found := false -}}
-          {{- range .resources.hostedcluster.status.conditions -}}
-            {{- if eq .type "Degraded" -}}
-              {{- if eq .status "False" -}}The hosted cluster is healthy and not degraded{{- else -}}{{ .message }}{{- end -}}
-              {{- $found = true -}}
-            {{- end -}}
-          {{- end -}}
-          {{- if not $found -}}Degraded condition not yet reported by HostedCluster{{- end -}}
-        {{- else -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.hostedcluster.status.conditions -}}`}}
+            {{`{{- if eq .type "Degraded" -}}`}}
+              {{`{{- if eq .status "False" -}}`}}The hosted cluster is healthy and not degraded{{`{{- else -}}{{ .message }}{{- end -}}`}}
+              {{`{{- $found = true -}}`}}
+            {{`{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}Degraded condition not yet reported by HostedCluster{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
           HostedCluster resource not found or not created yet
-        {{- end }}
+        {{`{{- end }}`}}
 
     - name: "APIServer"
       status: >-
-        {{- if .resources.hostedcluster -}}
-          {{- if and .resources.hostedcluster.status.controlPlaneEndpoint .resources.hostedcluster.status.controlPlaneEndpoint.host (ne .resources.hostedcluster.status.controlPlaneEndpoint.host "") (ne .resources.hostedcluster.status.controlPlaneEndpoint.port 0) -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- if and .resources.hostedcluster.status.controlPlaneEndpoint .resources.hostedcluster.status.controlPlaneEndpoint.host (ne .resources.hostedcluster.status.controlPlaneEndpoint.host "") (ne .resources.hostedcluster.status.controlPlaneEndpoint.port 0) -}}`}}
         True
-          {{- else -}}
+          {{`{{- else -}}`}}
         False
-          {{- end -}}
-        {{- else -}}
+          {{`{{- end -}}`}}
+        {{`{{- else -}}`}}
         Unknown
-        {{- end }}
+        {{`{{- end }}`}}
       reason: >-
-        {{- if .resources.hostedcluster -}}
-          {{- if and .resources.hostedcluster.status.controlPlaneEndpoint .resources.hostedcluster.status.controlPlaneEndpoint.host (ne .resources.hostedcluster.status.controlPlaneEndpoint.host "") (ne .resources.hostedcluster.status.controlPlaneEndpoint.port 0) -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- if and .resources.hostedcluster.status.controlPlaneEndpoint .resources.hostedcluster.status.controlPlaneEndpoint.host (ne .resources.hostedcluster.status.controlPlaneEndpoint.host "") (ne .resources.hostedcluster.status.controlPlaneEndpoint.port 0) -}}`}}
         EndpointReady
-          {{- else -}}
+          {{`{{- else -}}`}}
         EndpointNotReady
-          {{- end -}}
-        {{- else -}}
+          {{`{{- end -}}`}}
+        {{`{{- else -}}`}}
         ResourceNotFound
-        {{- end }}
+        {{`{{- end }}`}}
       message: >-
-        {{- if .resources.hostedcluster -}}
-          {{- if and .resources.hostedcluster.status.controlPlaneEndpoint .resources.hostedcluster.status.controlPlaneEndpoint.host (ne .resources.hostedcluster.status.controlPlaneEndpoint.host "") (ne .resources.hostedcluster.status.controlPlaneEndpoint.port 0) -}}
-        https://{{ .resources.hostedcluster.status.controlPlaneEndpoint.host }}:{{ .resources.hostedcluster.status.controlPlaneEndpoint.port }}
-          {{- else -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- if and .resources.hostedcluster.status.controlPlaneEndpoint .resources.hostedcluster.status.controlPlaneEndpoint.host (ne .resources.hostedcluster.status.controlPlaneEndpoint.host "") (ne .resources.hostedcluster.status.controlPlaneEndpoint.port 0) -}}`}}
+        https://{{`{{ .resources.hostedcluster.status.controlPlaneEndpoint.host }}`}}:{{`{{ .resources.hostedcluster.status.controlPlaneEndpoint.port }}`}}
+          {{`{{- else -}}`}}
         API Server endpoint is being configured
-          {{- end -}}
-        {{- else -}}
+          {{`{{- end -}}`}}
+        {{`{{- else -}}`}}
         HostedCluster resource not found
-        {{- end }}
+        {{`{{- end }}`}}
 
     - name: "OAuthServer"
       status: >-
-        {{- if .resources.hostedcluster -}}
-          {{- if .resources.hostedcluster.status.oauthCallbackURLTemplate -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- if .resources.hostedcluster.status.oauthCallbackURLTemplate -}}`}}
         True
-          {{- else -}}
+          {{`{{- else -}}`}}
         False
-          {{- end -}}
-        {{- else -}}
+          {{`{{- end -}}`}}
+        {{`{{- else -}}`}}
         Unknown
-        {{- end }}
+        {{`{{- end }}`}}
       reason: >-
-        {{- if .resources.hostedcluster -}}
-          {{- if .resources.hostedcluster.status.oauthCallbackURLTemplate -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- if .resources.hostedcluster.status.oauthCallbackURLTemplate -}}`}}
         EndpointReady
-          {{- else -}}
+          {{`{{- else -}}`}}
         EndpointNotReady
-          {{- end -}}
-        {{- else -}}
+          {{`{{- end -}}`}}
+        {{`{{- else -}}`}}
         ResourceNotFound
-        {{- end }}
+        {{`{{- end }}`}}
       message: >-
-        {{- if .resources.hostedcluster -}}
-          {{- if .resources.hostedcluster.status.oauthCallbackURLTemplate -}}
-        {{ .resources.hostedcluster.status.oauthCallbackURLTemplate | replace "/oauth2callback/[identity-provider-name]" "" }}
-          {{- else -}}
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- if .resources.hostedcluster.status.oauthCallbackURLTemplate -}}`}}
+        {{`{{ .resources.hostedcluster.status.oauthCallbackURLTemplate | replace "/oauth2callback/[identity-provider-name]" "" }}`}}
+          {{`{{- else -}}`}}
         OAuth Server endpoint is being configured
-          {{- end -}}
-        {{- else -}}
+          {{`{{- end -}}`}}
+        {{`{{- else -}}`}}
         HostedCluster resource not found
-        {{- end }}
+        {{`{{- end }}`}}
