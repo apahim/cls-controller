@@ -14,7 +14,7 @@ controller:
 
   # API Configuration
   api:
-    baseUrl: "http://cls-backend.cls-system:80/api/v1"
+    baseUrl: "http://cls-backend-apps-cls-backend-application.cls-system.svc.cluster.local:80/api/v1"
 
 # Pub/Sub Configuration
 pubsub:
