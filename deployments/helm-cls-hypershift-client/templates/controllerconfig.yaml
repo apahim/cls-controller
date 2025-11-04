@@ -21,20 +21,18 @@ spec:
         apiVersion: hypershift.openshift.io/v1beta1
         kind: HostedCluster
         metadata:
-          name: {{`{{ .cluster.name }}`}}
+          name: {{`{{ .cluster.name }}`}}-{{`{{ .cluster.id }}`}}
           namespace: clusters
+          annotations:
+            hypershift.openshift.io/pod-security-admission-label-override: baseline
         spec:
           release:
             image: quay.io/openshift-release-dev/ocp-release:4.14.0-x86_64
 
-          configuration:
-            securityContexts:
-              restricted: true
-
           controllerAvailabilityPolicy: SingleReplica
 
           platform:
-            type: None
+            type: GCP
 
           pullSecret:
             name: pull-secret
