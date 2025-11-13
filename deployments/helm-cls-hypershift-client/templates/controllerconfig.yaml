@@ -72,6 +72,11 @@ spec:
           dns:
             baseDomain: example.com
 
+          capabilities:
+            disabled:
+              # Disable ImageRegistry as GCS buckets not well supported yet. GCP-235
+              - ImageRegistry
+
 
   statusConditions:
     - name: "Applied"
