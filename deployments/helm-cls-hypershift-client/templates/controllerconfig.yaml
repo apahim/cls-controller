@@ -27,7 +27,7 @@ spec:
             hypershift.openshift.io/pod-security-admission-label-override: baseline
         spec:
           release:
-            image: quay.io/openshift-release-dev/ocp-release:4.14.0-x86_64
+            image: quay.io/openshift-release-dev/ocp-release:4.20.0-x86_64
 
           controllerAvailabilityPolicy: SingleReplica
 
@@ -71,6 +71,11 @@ spec:
 
           dns:
             baseDomain: example.com
+
+          capabilities:
+            disabled:
+              # Disable ImageRegistry as GCS buckets not well supported yet. GCP-235
+              - ImageRegistry
 
 
   statusConditions:
