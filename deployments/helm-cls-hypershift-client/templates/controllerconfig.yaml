@@ -13,6 +13,63 @@ spec:
       name: "{{ .Values.remoteCluster.secretName }}"
 
   resources:
+    - name: "namespace"
+      description: "Create a namespace to host the HostedCluster resource"
+      resourceManagement:
+        updateStrategy: "in_place"
+      template: |
+        apiVersion: v1
+        kind: Namespace
+        metadata:
+          name: clusters-{{`{{ .cluster.id }}`}}
+    - name: "pull-secret"
+      description: "Create ExternalSecret for OpenShift pull secret from GCP Secret Manager"
+      resourceManagement:
+        updateStrategy: "in_place"
+      template: |
+        apiVersion: external-secrets.io/v1beta1
+        kind: ExternalSecret
+        metadata:
+          name: {{ .Values.pullSecret.name }}
+          namespace: clusters-{{`{{ .cluster.id }}`}}
+        spec:
+          refreshInterval: {{ .Values.pullSecret.refreshInterval }}
+          secretStoreRef:
+            name: {{ .Values.pullSecret.clusterSecretStoreName }}
+            kind: ClusterSecretStore
+          target:
+            name: {{ .Values.pullSecret.name }}
+            creationPolicy: Owner
+            template:
+              type: kubernetes.io/dockerconfigjson
+          data:
+            - secretKey: .dockerconfigjson
+              remoteRef:
+                key: {{ .Values.pullSecret.gcpSecretName | quote }}
+    - name: "ssh-key"
+      description: "Create ExternalSecret for SSH key from GCP Secret Manager"
+      resourceManagement:
+        updateStrategy: "in_place"
+      template: |
+        apiVersion: external-secrets.io/v1beta1
+        kind: ExternalSecret
+        metadata:
+          name: {{ .Values.sshKey.name }}
+          namespace: clusters-{{`{{ .cluster.id }}`}}
+        spec:
+          refreshInterval: {{ .Values.sshKey.refreshInterval }}
+          secretStoreRef:
+            name: {{ .Values.sshKey.clusterSecretStoreName }}
+            kind: ClusterSecretStore
+          target:
+            name: {{ .Values.sshKey.name }}
+            creationPolicy: Owner
+            template:
+              type: Opaque
+          data:
+            - secretKey: {{ .Values.sshKey.secretKey }}
+              remoteRef:
+                key: {{ .Values.sshKey.gcpSecretName | quote }}
     - name: "hostedcluster"
       description: "Create a HostedCluster based on cls-backend cluster specification"
       resourceManagement:
@@ -21,8 +78,8 @@ spec:
         apiVersion: hypershift.openshift.io/v1beta1
         kind: HostedCluster
         metadata:
-          name: {{`{{ .cluster.name }}`}}-{{`{{ .cluster.id }}`}}
-          namespace: clusters
+          name: {{`{{ .cluster.name }}`}}
+          namespace: clusters-{{`{{ .cluster.id }}`}}
           annotations:
             hypershift.openshift.io/pod-security-admission-label-override: baseline
         spec:
@@ -81,22 +138,22 @@ spec:
   statusConditions:
     - name: "Applied"
       status: >-
-        {{`{{- if .resources.hostedcluster -}}`}}
+        {{`{{- if and .resources.namespace .resources.pull-secret .resources.ssh-key .resources.hostedcluster -}}`}}
         True
         {{`{{- else -}}`}}
         False
         {{`{{- end }}`}}
       reason: >-
-        {{`{{- if .resources.hostedcluster -}}`}}
-        ResourceCreated
+        {{`{{- if and .resources.namespace .resources.pull-secret .resources.ssh-key .resources.hostedcluster -}}`}}
+        ResourcesCreated
         {{`{{- else -}}`}}
-        ResourceNotCreated
+        ResourcesNotCreated
         {{`{{- end }}`}}
       message: >-
-        {{`{{- if .resources.hostedcluster -}}`}}
-        HostedCluster {{`{{ .cluster.name }}`}} created successfully
+        {{`{{- if and .resources.namespace .resources.pull-secret .resources.ssh-key .resources.hostedcluster -}}`}}
+        All resources created successfully: Namespace clusters-{{`{{ .cluster.id }}`}}, pull-secret, ssh-key, and HostedCluster {{`{{ .cluster.name }}`}}
         {{`{{- else -}}`}}
-        HostedCluster {{`{{ .cluster.name }}`}} not yet created
+        Waiting for resources (namespace: {{`{{ if .resources.namespace }}✓{{ else }}✗{{ end }}`}}, pull-secret: {{`{{ if .resources.pull-secret }}✓{{ else }}✗{{ end }}`}}, ssh-key: {{`{{ if .resources.ssh-key }}✓{{ else }}✗{{ end }}`}}, hostedcluster: {{`{{ if .resources.hostedcluster }}✓{{ else }}✗{{ end }}`}})
         {{`{{- end }}`}}
 
     - name: "Available"
