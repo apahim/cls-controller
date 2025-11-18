@@ -23,8 +23,6 @@ spec:
         metadata:
           name: {{`{{ .cluster.name }}`}}-{{`{{ .cluster.id }}`}}
           namespace: clusters
-          annotations:
-            hypershift.openshift.io/pod-security-admission-label-override: baseline
         spec:
           release:
             image: quay.io/openshift-release-dev/ocp-release:4.20.0-x86_64
