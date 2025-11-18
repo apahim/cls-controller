@@ -71,7 +71,6 @@ spec:
           name: {{`{{ .cluster.name }}`}}
           namespace: clusters-{{`{{ .cluster.id }}`}}
           annotations:
-            hypershift.openshift.io/pod-security-admission-label-override: baseline
             {{- if .Values.hypershift.controlPlaneOperatorImage }}
             hypershift.openshift.io/control-plane-operator-image: {{ .Values.hypershift.controlPlaneOperatorImage }}
             {{- end }}
