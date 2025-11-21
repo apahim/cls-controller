@@ -29,3 +29,10 @@ serviceAccount:
 # Remote cluster configuration
 remoteCluster:
   secretName: "remote-gke-cluster"
+
+# Pull Secret configuration (External Secrets)
+pullSecret:
+  name: "pull-secret"
+  refreshInterval: "1h"
+  clusterSecretStoreName: "gcp-secret-manager"
+  gcpSecretName: "default-openshift-pull-secret"
