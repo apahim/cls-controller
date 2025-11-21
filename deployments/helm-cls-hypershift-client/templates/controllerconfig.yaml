@@ -46,30 +46,6 @@ spec:
             - secretKey: .dockerconfigjson
               remoteRef:
                 key: {{ .Values.pullSecret.gcpSecretName | quote }}
-    - name: "ssh-key"
-      description: "Create ExternalSecret for SSH key from GCP Secret Manager"
-      resourceManagement:
-        updateStrategy: "in_place"
-      template: |
-        apiVersion: external-secrets.io/v1beta1
-        kind: ExternalSecret
-        metadata:
-          name: {{ .Values.sshKey.name }}
-          namespace: clusters-{{`{{ .cluster.id }}`}}
-        spec:
-          refreshInterval: {{ .Values.sshKey.refreshInterval }}
-          secretStoreRef:
-            name: {{ .Values.sshKey.clusterSecretStoreName }}
-            kind: ClusterSecretStore
-          target:
-            name: {{ .Values.sshKey.name }}
-            creationPolicy: Owner
-            template:
-              type: Opaque
-          data:
-            - secretKey: {{ .Values.sshKey.secretKey }}
-              remoteRef:
-                key: {{ .Values.sshKey.gcpSecretName | quote }}
     - name: "hostedcluster"
       description: "Create a HostedCluster based on cls-backend cluster specification"
       resourceManagement:
@@ -93,9 +69,6 @@ spec:
 
           pullSecret:
             name: pull-secret
-
-          sshKey:
-            name: ssh-key
 
           networking:
             clusterNetwork:
@@ -138,22 +111,22 @@ spec:
   statusConditions:
     - name: "Applied"
       status: >-
-        {{`{{- if and .resources.namespace .resources.pull-secret .resources.ssh-key .resources.hostedcluster -}}`}}
+        {{`{{- if and .resources.namespace .resources.pull-secret .resources.hostedcluster -}}`}}
         True
         {{`{{- else -}}`}}
         False
         {{`{{- end }}`}}
       reason: >-
-        {{`{{- if and .resources.namespace .resources.pull-secret .resources.ssh-key .resources.hostedcluster -}}`}}
+        {{`{{- if and .resources.namespace .resources.pull-secret .resources.hostedcluster -}}`}}
         ResourcesCreated
         {{`{{- else -}}`}}
         ResourcesNotCreated
         {{`{{- end }}`}}
       message: >-
-        {{`{{- if and .resources.namespace .resources.pull-secret .resources.ssh-key .resources.hostedcluster -}}`}}
-        All resources created successfully: Namespace clusters-{{`{{ .cluster.id }}`}}, pull-secret, ssh-key, and HostedCluster {{`{{ .cluster.name }}`}}
+        {{`{{- if and .resources.namespace .resources.pull-secret .resources.hostedcluster -}}`}}
+        All resources created successfully: Namespace clusters-{{`{{ .cluster.id }}`}}, pull-secret, and HostedCluster {{`{{ .cluster.name }}`}}
         {{`{{- else -}}`}}
-        Waiting for resources (namespace: {{`{{ if .resources.namespace }}✓{{ else }}✗{{ end }}`}}, pull-secret: {{`{{ if .resources.pull-secret }}✓{{ else }}✗{{ end }}`}}, ssh-key: {{`{{ if .resources.ssh-key }}✓{{ else }}✗{{ end }}`}}, hostedcluster: {{`{{ if .resources.hostedcluster }}✓{{ else }}✗{{ end }}`}})
+        Waiting for resources (namespace: {{`{{ if .resources.namespace }}✓{{ else }}✗{{ end }}`}}, pull-secret: {{`{{ if .resources.pull-secret }}✓{{ else }}✗{{ end }}`}}, hostedcluster: {{`{{ if .resources.hostedcluster }}✓{{ else }}✗{{ end }}`}})
         {{`{{- end }}`}}
 
     - name: "Available"

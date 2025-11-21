@@ -36,11 +36,3 @@ pullSecret:
   refreshInterval: "1h"
   clusterSecretStoreName: "gcp-secret-manager"
   gcpSecretName: "default-openshift-pull-secret"
-
-# SSH Key configuration (External Secrets)
-sshKey:
-  name: "ssh-key"
-  refreshInterval: "1h"
-  clusterSecretStoreName: "gcp-secret-manager"
-  gcpSecretName: "openshift-ssh-key"
-  secretKey: "default-ssh-publickey"
