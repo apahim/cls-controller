@@ -46,6 +46,20 @@ spec:
             - secretKey: .dockerconfigjson
               remoteRef:
                 key: {{ .Values.pullSecret.gcpSecretName | quote }}
+    - name: "signing-key-secret"
+      description: "Create a Secret containing the service account signing key"
+      resourceManagement:
+        updateStrategy: "in_place"
+      template: |
+        apiVersion: v1
+        kind: Secret
+        metadata:
+          name: {{`{{ .cluster.name }}`}}-signing-key
+          namespace: clusters-{{`{{ .cluster.id }}`}}
+        type: Opaque
+        data:
+          key: {{`{{ .cluster.spec.serviceAccountSigningKey }}`}}
+
     - name: "hostedcluster"
       description: "Create a HostedCluster based on cls-backend cluster specification"
       resourceManagement:
@@ -65,7 +79,30 @@ spec:
           controllerAvailabilityPolicy: SingleReplica
 
           platform:
+            {{`{{- if eq .cluster.spec.platform.type "GCP" }}`}}
+            type: GCP
+            gcp:
+              project: {{`{{ .cluster.spec.platform.gcp.projectID }}`}}
+              region: {{`{{ .cluster.spec.platform.gcp.region }}`}}
+              networkConfig:
+                network:
+                  name: default
+                privateServiceConnectSubnet:
+                  name: default
+              {{`{{- if .cluster.spec.platform.gcp.workloadIdentity }}`}}
+              workloadIdentity:
+                projectNumber: "{{`{{ .cluster.spec.platform.gcp.workloadIdentity.projectNumber }}`}}"
+                poolID: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.poolID }}`}}
+                providerID: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.providerID }}`}}
+                {{`{{- if .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef }}`}}
+                serviceAccountsRef:
+                  nodePoolEmail: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.nodePoolEmail }}`}}
+                  controlPlaneEmail: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.controlPlaneEmail }}`}}
+                {{`{{- end }}`}}
+              {{`{{- end }}`}}
+            {{`{{- else }}`}}
             type: None
+            {{`{{- end }}`}}
 
           pullSecret:
             name: pull-secret
@@ -100,7 +137,14 @@ spec:
           infraID: {{`{{ .cluster.id }}`}}
 
           dns:
-            baseDomain: example.com
+            baseDomain: {{`{{ .cluster.spec.baseDomain | default "example.com" }}`}}
+
+          {{`{{- if .cluster.spec.issuerURL }}`}}
+          issuerURL: {{`{{ .cluster.spec.issuerURL }}`}}
+          {{`{{- end }}`}}
+
+          serviceAccountSigningKey:
+            name: {{`{{ .cluster.name }}`}}-signing-key
 
           capabilities:
             disabled:
@@ -111,22 +155,22 @@ spec:
   statusConditions:
     - name: "Applied"
       status: >-
-        {{`{{- if and .resources.namespace .resources.pull-secret .resources.hostedcluster -}}`}}
+        {{`{{- if and .resources.namespace (index .resources "pull-secret") (index .resources "signing-key-secret") .resources.hostedcluster -}}`}}
         True
         {{`{{- else -}}`}}
         False
         {{`{{- end }}`}}
       reason: >-
-        {{`{{- if and .resources.namespace .resources.pull-secret .resources.hostedcluster -}}`}}
+        {{`{{- if and .resources.namespace (index .resources "pull-secret") (index .resources "signing-key-secret") .resources.hostedcluster -}}`}}
         ResourcesCreated
         {{`{{- else -}}`}}
         ResourcesNotCreated
         {{`{{- end }}`}}
       message: >-
-        {{`{{- if and .resources.namespace .resources.pull-secret .resources.hostedcluster -}}`}}
-        All resources created successfully: Namespace clusters-{{`{{ .cluster.id }}`}}, pull-secret, and HostedCluster {{`{{ .cluster.name }}`}}
+        {{`{{- if and .resources.namespace (index .resources "pull-secret") (index .resources "signing-key-secret") .resources.hostedcluster -}}`}}
+        All resources created successfully: Namespace clusters-{{`{{ .cluster.id }}`}}, pull-secret, signing-key-secret, and HostedCluster {{`{{ .cluster.name }}`}}
         {{`{{- else -}}`}}
-        Waiting for resources (namespace: {{`{{ if .resources.namespace }}✓{{ else }}✗{{ end }}`}}, pull-secret: {{`{{ if .resources.pull-secret }}✓{{ else }}✗{{ end }}`}}, hostedcluster: {{`{{ if .resources.hostedcluster }}✓{{ else }}✗{{ end }}`}})
+        Waiting for resources (namespace: {{`{{ if .resources.namespace }}✓{{ else }}✗{{ end }}`}}, pull-secret: {{`{{ if (index .resources "pull-secret") }}✓{{ else }}✗{{ end }}`}}, signing-key-secret: {{`{{ if (index .resources "signing-key-secret") }}✓{{ else }}✗{{ end }}`}}, hostedcluster: {{`{{ if .resources.hostedcluster }}✓{{ else }}✗{{ end }}`}})
         {{`{{- end }}`}}
 
     - name: "Available"
