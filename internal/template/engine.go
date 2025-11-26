@@ -6,6 +6,7 @@ import (
 	"encoding/base64"
 	"encoding/json"
 	"fmt"
+	"regexp"
 	"strings"
 	"text/template"
 	"time"
@@ -146,14 +147,39 @@ func (e *Engine) RenderStatusCondition(conditionName string, cluster *sdk.Cluste
 
 // compileTemplate compiles a single template with our function map
 func (e *Engine) compileTemplate(name, templateStr string) (*template.Template, error) {
+	// Preprocess template to handle hyphenated resource names
+	processedTemplate := e.preprocessTemplate(templateStr)
+
 	tmpl := template.New(name).Funcs(e.getFunctionMap())
 
-	compiled, err := tmpl.Parse(templateStr)
+	compiled, err := tmpl.Parse(processedTemplate)
 	if err != nil {
 		return nil, fmt.Errorf("template parse error: %w", err)
 	}
 
 	return compiled, nil
+}
+
+// preprocessTemplate converts hyphenated resource references to use index notation
+// For example: .resources.pull-secret becomes (index .resources "pull-secret")
+func (e *Engine) preprocessTemplate(templateStr string) string {
+	// Regular expression to match .resources.RESOURCE-NAME where RESOURCE-NAME contains hyphens
+	// This pattern matches:
+	// - .resources. (literal)
+	// - followed by a resource name that contains at least one hyphen
+	// - resource name can contain alphanumeric, hyphens, and underscores
+	// - but must contain at least one hyphen to trigger the replacement
+	re := regexp.MustCompile(`\.resources\.([a-zA-Z0-9_]*[a-zA-Z0-9_-]*-[a-zA-Z0-9_-]*)`)
+
+	// Replace with index notation
+	processed := re.ReplaceAllStringFunc(templateStr, func(match string) string {
+		// Extract the resource name (everything after .resources.)
+		resourceName := strings.TrimPrefix(match, ".resources.")
+		// Replace with index notation
+		return fmt.Sprintf(`(index .resources "%s")`, resourceName)
+	})
+
+	return processed
 }
 
 // renderStringTemplate renders a template to a string
