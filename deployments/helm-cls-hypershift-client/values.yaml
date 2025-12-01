@@ -36,3 +36,8 @@ pullSecret:
   refreshInterval: "1h"
   clusterSecretStoreName: "gcp-secret-manager"
   gcpSecretName: "default-openshift-pull-secret"
+
+# HyperShift configuration
+hypershift:
+  # Optional: Override control plane operator image for testing in dev/integration environments
+  controlPlaneOperatorImage: ""
