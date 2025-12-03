@@ -211,6 +211,7 @@ func (e *Engine) buildClusterContext(cluster *sdk.Cluster) map[string]interface{
 		"id":         cluster.ID,
 		"name":       cluster.Name,
 		"generation": cluster.Generation,
+		"created_by": cluster.CreatedBy,
 	}
 
 	// Parse spec JSON to make it accessible in templates
