@@ -126,7 +126,7 @@ spec:
           # This $slug variable will be replaced by a computed slug in GCP-259
 
           services:
-            {{`{{- $slug := .cluster.created_by | split "@" | first }}`}}
+            {{`{{- $slug := index (split "@" .cluster.created_by) 0 }}`}}
             - service: APIServer
               servicePublishingStrategy:
                 type: Route
@@ -336,7 +336,7 @@ spec:
         {{`{{- end }}`}}
       message: >-
         {{`{{- if .resources.hostedcluster -}}`}}
-        {{`{{- $slug := .cluster.created_by | split "@" | first }}`}}
+        {{`{{- $slug := index (split "@" .cluster.created_by) 0 }}`}}
         API: api.{{`{{ .cluster.name }}`}}-{{`{{ $slug }}`}}.{{ $baseDomain }} | Ingress: in.{{`{{ .cluster.name }}`}}-{{`{{ $slug }}`}}.{{ $baseDomain }} | Apps: *.apps.in.{{`{{ .cluster.name }}`}}-{{`{{ $slug }}`}}.{{ $baseDomain }}
         {{`{{- else -}}`}}
         HostedCluster resource not found
