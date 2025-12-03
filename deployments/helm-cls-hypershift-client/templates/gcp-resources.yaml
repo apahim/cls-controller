@@ -69,6 +69,7 @@ metadata:
     app.kubernetes.io/component: iam-policy
 spec:
   resourceRef:
+    apiVersion: resourcemanager.cnrm.cloud.google.com/v1beta1
     kind: Project
     external: {{ .Values.gcp.projectId }}
   role: "roles/pubsub.viewer"
