@@ -89,9 +89,10 @@ spec:
               region: {{`{{ .cluster.spec.platform.gcp.region }}`}}
               networkConfig:
                 network:
-                  name: default
+                  name: {{`{{ .cluster.spec.platform.gcp.network }}`}}
                 privateServiceConnectSubnet:
-                  name: default
+                  name: {{`{{ .cluster.spec.platform.gcp.subnet }}`}}
+              endpointAccess: {{`{{ .cluster.spec.platform.gcp.endpointAccess | default "Private" }}`}}
               {{`{{- if .cluster.spec.platform.gcp.workloadIdentity }}`}}
               workloadIdentity:
                 projectNumber: "{{`{{ .cluster.spec.platform.gcp.workloadIdentity.projectNumber }}`}}"
