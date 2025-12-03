@@ -346,14 +346,17 @@ func (c *Controller) isImmutableResourceKind(kind string) bool {
 
 // getOrUpdateInPlaceResource handles in-place resource updates
 func (c *Controller) getOrUpdateInPlaceResource(ctx context.Context, resourceClient client.ResourceClient, resource *unstructured.Unstructured, cluster *sdk.Cluster) (*unstructured.Unstructured, error) {
+	// Add standard labels to resource before any operations
+	// This ensures labels are present for both create and update paths
+	c.addStandardLabels(resource, cluster)
+
 	// Try to get existing resource
 	existing := &unstructured.Unstructured{}
 	existing.SetGroupVersionKind(resource.GroupVersionKind())
 
 	err := resourceClient.Get(ctx, resource.GetName(), resource.GetNamespace(), existing)
 	if err != nil {
-		// Resource doesn't exist - create it with standard labels
-		c.addStandardLabels(resource, cluster)
+		// Resource doesn't exist - create it
 		if err := resourceClient.Create(ctx, resource); err != nil {
 			return nil, fmt.Errorf("failed to create resource: %w", err)
 		}
@@ -367,9 +370,11 @@ func (c *Controller) getOrUpdateInPlaceResource(ctx context.Context, resourceCli
 		if err := resourceClient.Update(ctx, resource); err != nil {
 			return nil, fmt.Errorf("failed to update resource: %w", err)
 		}
+		// Return the updated resource
+		return resource, nil
 	}
 
-	// Return the existing resource with current status
+	// No update needed - return existing resource with current status
 	return existing, nil
 }
 
