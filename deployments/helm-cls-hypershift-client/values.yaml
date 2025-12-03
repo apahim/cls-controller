@@ -41,3 +41,7 @@ pullSecret:
 hypershift:
   # Optional: Override control plane operator image for testing in dev/integration environments
   controlPlaneOperatorImage: ""
+
+# HostedCluster DNS domains (comma-separated list)
+# The first domain from this list will be used as the base domain for HostedClusters
+hc_dns_domains: ""
