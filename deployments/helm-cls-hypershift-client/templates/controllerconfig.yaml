@@ -89,9 +89,10 @@ spec:
               region: {{`{{ .cluster.spec.platform.gcp.region }}`}}
               networkConfig:
                 network:
-                  name: default
+                  name: {{`{{ .cluster.spec.platform.gcp.network }}`}}
                 privateServiceConnectSubnet:
-                  name: default
+                  name: {{`{{ .cluster.spec.platform.gcp.subnet }}`}}
+              endpointAccess: {{`{{ .cluster.spec.platform.gcp.endpointAccess | default "Private" }}`}}
               {{`{{- if .cluster.spec.platform.gcp.workloadIdentity }}`}}
               workloadIdentity:
                 projectNumber: "{{`{{ .cluster.spec.platform.gcp.workloadIdentity.projectNumber }}`}}"
@@ -117,30 +118,37 @@ spec:
               - cidr: 172.31.0.0/16
             networkType: OVNKubernetes
 
+          {{- $domains := splitList "," .Values.hc_dns_domains }}
+          {{- $baseDomain := index $domains 0 | trim }}
+
+          # TODO(GCP-259): Replace this temporary slug with proper slug computation
+          # Currently extracting username from created_by email for internal testing only
+          # This $slug variable will be replaced by a computed slug in GCP-259
+
           services:
+            {{`{{- $slug := index (split .cluster.created_by "@") 0 }}`}}
             - service: APIServer
               servicePublishingStrategy:
-                type: LoadBalancer
+                type: Route
+                route:
+                  hostname: api.{{`{{ .cluster.name }}`}}-{{`{{ $slug }}`}}.{{ $baseDomain }}
             - service: OAuthServer
               servicePublishingStrategy:
-                type: NodePort
-                nodePort:
-                  address: 0.0.0.0
+                type: Route
+                route:
+                  hostname: oauth.{{`{{ .cluster.name }}`}}-{{`{{ $slug }}`}}.{{ $baseDomain }}
             - service: Konnectivity
               servicePublishingStrategy:
-                type: NodePort
-                nodePort:
-                  address: 0.0.0.0
+                type: Route
             - service: Ignition
               servicePublishingStrategy:
-                type: NodePort
-                nodePort:
-                  address: 0.0.0.0
+                type: Route
 
           infraID: {{`{{ .cluster.id }}`}}
 
           dns:
-            baseDomain: {{`{{ .cluster.spec.baseDomain | default "example.com" }}`}}
+            baseDomain: in.{{`{{ .cluster.name }}`}}-{{`{{ $slug }}`}}.{{ $baseDomain }}
+            baseDomainPrefix: ""
 
           {{`{{- if .cluster.spec.issuerURL }}`}}
           issuerURL: {{`{{ .cluster.spec.issuerURL }}`}}
@@ -309,6 +317,27 @@ spec:
           {{`{{- else -}}`}}
         OAuth Server endpoint is being configured
           {{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+        HostedCluster resource not found
+        {{`{{- end }}`}}
+
+    - name: "DNS"
+      status: >-
+        {{`{{- if .resources.hostedcluster -}}`}}
+        True
+        {{`{{- else -}}`}}
+        Unknown
+        {{`{{- end }}`}}
+      reason: >-
+        {{`{{- if .resources.hostedcluster -}}`}}
+        DNSConfigured
+        {{`{{- else -}}`}}
+        ResourceNotFound
+        {{`{{- end }}`}}
+      message: >-
+        {{`{{- if .resources.hostedcluster -}}`}}
+        {{`{{- $slug := index (split .cluster.created_by "@") 0 }}`}}
+        API: api.{{`{{ .cluster.name }}`}}-{{`{{ $slug }}`}}.{{ $baseDomain }} | Ingress: in.{{`{{ .cluster.name }}`}}-{{`{{ $slug }}`}}.{{ $baseDomain }} | Apps: *.apps.in.{{`{{ .cluster.name }}`}}-{{`{{ $slug }}`}}.{{ $baseDomain }}
         {{`{{- else -}}`}}
         HostedCluster resource not found
         {{`{{- end }}`}}
