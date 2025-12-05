@@ -8,8 +8,8 @@ import (
 	"strings"
 	"time"
 
-	"github.com/apahim/cls-controller/internal/crd"
 	"github.com/apahim/cls-controller/internal/client"
+	"github.com/apahim/cls-controller/internal/crd"
 	"github.com/apahim/cls-controller/internal/sdk"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
@@ -1145,13 +1145,13 @@ func (c *Controller) extractGroupVersionKind(template string) (schema.GroupVersi
 // parseApiVersion parses an apiVersion string into group and version components
 func (c *Controller) parseApiVersion(apiVersion string) (group, version string) {
 	if !strings.Contains(apiVersion, "/") {
-		return "", apiVersion  // Core API: "v1" → group="", version="v1"
+		return "", apiVersion // Core API: "v1" → group="", version="v1"
 	}
 	parts := strings.SplitN(apiVersion, "/", 2)
 	if len(parts) == 2 {
-		return parts[0], parts[1]  // Grouped API: "hypershift.openshift.io/v1beta1"
+		return parts[0], parts[1] // Grouped API: "hypershift.openshift.io/v1beta1"
 	}
-	return "", apiVersion  // Fallback
+	return "", apiVersion // Fallback
 }
 
 // deleteResourcesByLabels finds and deletes all resources with matching labels
@@ -1210,4 +1210,3 @@ func (c *Controller) deleteResourcesByLabels(ctx context.Context, resourceClient
 
 	return deletedCount, nil
 }
-

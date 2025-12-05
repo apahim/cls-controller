@@ -192,12 +192,12 @@ type ControllerConfigList struct {
 
 // Constants for operators
 const (
-	OperatorEqual       = "eq"
-	OperatorNotEqual    = "ne"
-	OperatorIn          = "in"
-	OperatorNotIn       = "notin"
-	OperatorExists      = "exists"
-	OperatorNotExists   = "notexists"
+	OperatorEqual     = "eq"
+	OperatorNotEqual  = "ne"
+	OperatorIn        = "in"
+	OperatorNotIn     = "notin"
+	OperatorExists    = "exists"
+	OperatorNotExists = "notexists"
 )
 
 // Constants for update strategies
@@ -214,7 +214,7 @@ const (
 
 // Constants for authentication methods
 const (
-	AuthMethodKubeConfig      = "kubeconfig"
+	AuthMethodKubeConfig       = "kubeconfig"
 	AuthMethodWorkloadIdentity = "workload-identity"
 )
 

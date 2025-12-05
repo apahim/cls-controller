@@ -5,11 +5,11 @@ import (
 	"fmt"
 	"time"
 
+	"github.com/apahim/cls-controller/internal/client"
 	"github.com/apahim/cls-controller/internal/config"
 	"github.com/apahim/cls-controller/internal/crd"
-	"github.com/apahim/cls-controller/internal/template"
-	"github.com/apahim/cls-controller/internal/client"
 	"github.com/apahim/cls-controller/internal/sdk"
+	"github.com/apahim/cls-controller/internal/template"
 	"go.uber.org/zap"
 	"k8s.io/apimachinery/pkg/runtime"
 	clientgoscheme "k8s.io/client-go/kubernetes/scheme"
@@ -20,18 +20,18 @@ import (
 
 // Controller represents the simplified CLS controller
 type Controller struct {
-	config       *config.Config
-	k8sClient    ctrlclient.Client
-	logger       *zap.Logger
+	config    *config.Config
+	k8sClient ctrlclient.Client
+	logger    *zap.Logger
 
 	// SDK client for event handling and status reporting
-	sdkClient    *sdk.Client
+	sdkClient *sdk.Client
 
 	// Template engine for rendering resources
 	templateEngine *template.Engine
 
 	// Client manager for different target types
-	clientManager  *client.Manager
+	clientManager *client.Manager
 
 	// Current controller configuration
 	controllerConfig *crd.ControllerConfig
@@ -335,7 +335,6 @@ func (c *Controller) reportError(event *sdk.ClusterEvent, reason string, err err
 	return c.sdkClient.ReportStatus(update)
 }
 
-
 // GetScheme returns the runtime scheme with our CRDs registered
 func GetScheme() *runtime.Scheme {
 	scheme := runtime.NewScheme()
@@ -343,7 +342,6 @@ func GetScheme() *runtime.Scheme {
 	_ = clientgoscheme.AddToScheme(scheme)
 	// Add our CRD types
 	_ = crd.AddToScheme(scheme)
-	crd.EnsureTypesRegistered(scheme) // Explicitly register types
+	_ = crd.EnsureTypesRegistered(scheme) // Explicitly register types
 	return scheme
 }
-

@@ -17,7 +17,7 @@ YELLOW = \033[1;33m
 RED = \033[0;31m
 NC = \033[0m # No Color
 
-.PHONY: help build push deploy test cleanup all dev-setup config go-build go-test go-lint
+.PHONY: help build push deploy test cleanup all dev-setup config go-build go-test go-lint ci-test ci-lint ci-build ci-build-container ci-check
 
 # Default target
 all: build push deploy
@@ -166,6 +166,53 @@ go-lint: dev-setup ## Run Go linter
 	else \
 		echo "$(YELLOW)⚠️  golangci-lint not found, skipping$(NC)"; \
 	fi
+
+# CI targets (same checks as GitHub Actions)
+
+ci-test: ## Run tests with race detection and coverage (CI mode)
+	@echo "$(BLUE)🧪 Running tests with race detection and coverage$(NC)"
+	@go test -v -race -coverprofile=coverage.txt -covermode=atomic ./...
+	@echo "$(GREEN)✅ Tests passed with coverage$(NC)"
+
+ci-lint: ## Run golangci-lint (CI mode)
+	@echo "$(BLUE)🔍 Running golangci-lint$(NC)"
+	@if command -v golangci-lint >/dev/null 2>&1; then \
+		golangci-lint run --timeout=5m; \
+	else \
+		echo "$(RED)❌ golangci-lint not found$(NC)"; \
+		echo "Install from: https://golangci-lint.run/usage/install/"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✅ Linting passed$(NC)"
+
+ci-build: ## Build binary (CI mode)
+	@echo "$(BLUE)📋 Building Go binary (CI mode)$(NC)"
+	@CGO_ENABLED=0 GOOS=linux GOARCH=amd64 go build \
+		-ldflags='-w -s -extldflags "-static"' \
+		-a -installsuffix cgo \
+		-o controller \
+		cmd/controller/main.go
+	@file controller
+	@ls -lh controller
+	@echo "$(GREEN)✅ Binary built successfully$(NC)"
+
+ci-build-container: ## Build container image (CI mode)
+	@echo "$(BLUE)🐳 Building container image$(NC)"
+	@if command -v docker >/dev/null 2>&1; then \
+		docker build -f Dockerfile.ci -t cls-controller:ci .; \
+	elif command -v podman >/dev/null 2>&1; then \
+		podman build -f Dockerfile.ci -t cls-controller:ci .; \
+	else \
+		echo "$(RED)❌ Neither docker nor podman found$(NC)"; \
+		exit 1; \
+	fi
+	@echo "$(GREEN)✅ Container image built successfully$(NC)"
+
+ci-check: ci-test ci-lint ci-build ## Run all CI checks locally
+	@echo ""
+	@echo "$(GREEN)✅ All CI checks passed!$(NC)"
+	@echo ""
+	@echo "$(BLUE)Your code is ready to push$(NC)"
 
 # Utility targets
 

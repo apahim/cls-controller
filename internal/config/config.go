@@ -15,14 +15,14 @@ type Config struct {
 	ControllerName string `mapstructure:"controller_name"`
 
 	// Kubernetes controller configuration
-	MetricsAddr           string `mapstructure:"metrics_addr"`
+	MetricsAddr          string `mapstructure:"metrics_addr"`
 	ProbeAddr            string `mapstructure:"probe_addr"`
 	EnableLeaderElection bool   `mapstructure:"enable_leader_election"`
 
 	// CLS Backend configuration
-	ProjectID   string `mapstructure:"project_id"`
-	APIBaseURL  string `mapstructure:"api_base_url"`
-	APITimeout  time.Duration `mapstructure:"api_timeout"`
+	ProjectID  string        `mapstructure:"project_id"`
+	APIBaseURL string        `mapstructure:"api_base_url"`
+	APITimeout time.Duration `mapstructure:"api_timeout"`
 
 	// Controller authentication configuration
 	ControllerEmail string `mapstructure:"controller_email"`
@@ -53,9 +53,9 @@ type Config struct {
 func Load() (*Config, error) {
 	cfg := &Config{
 		// Default values
-		MetricsAddr:           ":8080",
+		MetricsAddr:          ":8080",
 		ProbeAddr:            ":8081",
-		EnableLeaderElection:  false,
+		EnableLeaderElection: false,
 		APITimeout:           30 * time.Second,
 		RetryAttempts:        3,
 		RetryBackoff:         5 * time.Second,
@@ -93,18 +93,18 @@ func Load() (*Config, error) {
 // bindEnvVars binds environment variables to configuration keys
 func bindEnvVars(v *viper.Viper) {
 	envVars := map[string]string{
-		"controller_name":       "CONTROLLER_NAME",
-		"project_id":           "PROJECT_ID",
-		"api_base_url":         "API_BASE_URL",
-		"controller_email":     "CONTROLLER_EMAIL",
-		"status_topic":         "STATUS_TOPIC",
-		"events_subscription":  "EVENTS_SUBSCRIPTION",
-		"pubsub_emulator_host": "PUBSUB_EMULATOR_HOST",
-		"credentials_file":     "CREDENTIALS_FILE",
-		"config_namespace":     "CONFIG_NAMESPACE",
-		"config_name":          "CONFIG_NAME",
-		"metrics_addr":         "METRICS_ADDR",
-		"probe_addr":           "PROBE_ADDR",
+		"controller_name":        "CONTROLLER_NAME",
+		"project_id":             "PROJECT_ID",
+		"api_base_url":           "API_BASE_URL",
+		"controller_email":       "CONTROLLER_EMAIL",
+		"status_topic":           "STATUS_TOPIC",
+		"events_subscription":    "EVENTS_SUBSCRIPTION",
+		"pubsub_emulator_host":   "PUBSUB_EMULATOR_HOST",
+		"credentials_file":       "CREDENTIALS_FILE",
+		"config_namespace":       "CONFIG_NAMESPACE",
+		"config_name":            "CONFIG_NAME",
+		"metrics_addr":           "METRICS_ADDR",
+		"probe_addr":             "PROBE_ADDR",
 		"enable_leader_election": "ENABLE_LEADER_ELECTION",
 	}
 
@@ -176,4 +176,3 @@ func (c *Config) buildSDKConfig() {
 		ControllerEmail:     c.ControllerEmail,
 	}
 }
-
