@@ -92,17 +92,13 @@ spec:
                 privateServiceConnectSubnet:
                   name: {{`{{ .cluster.spec.platform.gcp.subnet }}`}}
               endpointAccess: {{`{{ .cluster.spec.platform.gcp.endpointAccess | default "Private" }}`}}
-              {{`{{- if .cluster.spec.platform.gcp.workloadIdentity }}`}}
               workloadIdentity:
                 projectNumber: "{{`{{ .cluster.spec.platform.gcp.workloadIdentity.projectNumber }}`}}"
                 poolID: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.poolID }}`}}
                 providerID: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.providerID }}`}}
-                {{`{{- if .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef }}`}}
-                serviceAccountsRef:
-                  nodePoolEmail: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.nodePoolEmail }}`}}
-                  controlPlaneEmail: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.controlPlaneEmail }}`}}
-                {{`{{- end }}`}}
-              {{`{{- end }}`}}
+                serviceAccountsEmails:
+                  nodePool: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.nodePoolEmail }}`}}
+                  controlPlane: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.controlPlaneEmail }}`}}
             {{`{{- else }}`}}
             type: None
             {{`{{- end }}`}}
