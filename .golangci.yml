@@ -1,0 +1,49 @@
+linters-settings:
+  govet:
+    # Disable fieldalignment - it's a micro-optimization
+    disable:
+      - fieldalignment
+      - shadow
+  errcheck:
+    # Allow ignoring certain error checks
+    exclude-functions:
+      - (io.Closer).Close
+      - (*github.com/spf13/viper.Viper).BindEnv
+
+linters:
+  disable-all: true
+  enable:
+    - bodyclose
+    - errcheck
+    - gofmt
+    - goimports
+    - gosimple
+    - govet
+    - ineffassign
+    - staticcheck
+    - typecheck
+    - unused
+
+issues:
+  exclude-use-default: true
+  exclude-rules:
+    - path: _test\.go
+      linters:
+        - errcheck
+    - path: cmd/controller/main.go
+      linters:
+        - errcheck
+    # Ignore some gosimple warnings for code clarity
+    - linters:
+        - gosimple
+      text: "S1021|S1031"
+    # Ignore unused code - may be for future use or scaffolding
+    - linters:
+        - unused
+      text: "is unused"
+  max-issues-per-linter: 0
+  max-same-issues: 0
+
+run:
+  timeout: 5m
+  issues-exit-code: 1

@@ -17,9 +17,9 @@ type Condition struct {
 
 // ErrorInfo represents detailed error information
 type ErrorInfo struct {
-	ErrorType      string                 `json:"error_type"`      // Fatal, Configuration, Transient, System
-	ErrorCode      string                 `json:"error_code"`      // HTTP status, k8s error code, etc.
-	Message        string                 `json:"message"`        // Human-readable error message
+	ErrorType      string                 `json:"error_type"` // Fatal, Configuration, Transient, System
+	ErrorCode      string                 `json:"error_code"` // HTTP status, k8s error code, etc.
+	Message        string                 `json:"message"`    // Human-readable error message
 	Details        map[string]interface{} `json:"details,omitempty"`
 	UserActionable bool                   `json:"user_actionable"` // Whether user can fix this
 	RetryAfter     *time.Duration         `json:"retry_after,omitempty"`
@@ -81,9 +81,9 @@ type ControllerEvent struct {
 type ClusterStatusInfo struct {
 	ObservedGeneration int64       `json:"observedGeneration"`
 	Conditions         []Condition `json:"conditions"`
-	Phase              string      `json:"phase,omitempty"`    // Current lifecycle phase
-	Message            string      `json:"message,omitempty"`  // Human-readable status message
-	Reason             string      `json:"reason,omitempty"`   // Machine-readable reason
+	Phase              string      `json:"phase,omitempty"`   // Current lifecycle phase
+	Message            string      `json:"message,omitempty"` // Human-readable status message
+	Reason             string      `json:"reason,omitempty"`  // Machine-readable reason
 	LastUpdateTime     time.Time   `json:"lastUpdateTime"`
 }
 
@@ -152,8 +152,8 @@ type Config struct {
 	HealthCheckInterval time.Duration `json:"health_check_interval"`
 
 	// API client configuration for fetching specs and reporting status
-	APIBaseURL string        `json:"api_base_url"`    // e.g., "http://localhost:8080/api/v1"
-	APITimeout time.Duration `json:"api_timeout"`     // HTTP client timeout
+	APIBaseURL string        `json:"api_base_url"` // e.g., "http://localhost:8080/api/v1"
+	APITimeout time.Duration `json:"api_timeout"`  // HTTP client timeout
 
 	// Controller authentication configuration
 	ControllerEmail string `json:"controller_email"` // Email to use for X-User-Email header (e.g., "controller@system.local")
@@ -191,7 +191,7 @@ const (
 
 // Condition types
 const (
-	ConditionApplied     = "Applied"    // Required: Has the controller applied/created its resources?
+	ConditionApplied     = "Applied"   // Required: Has the controller applied/created its resources?
 	ConditionAvailable   = "Available" // Required: Used by cls-backend for status aggregation - are resources available?
 	ConditionReady       = "Ready"     // Required: Is everything ready to serve requests?
 	ConditionProgressing = "Progressing"

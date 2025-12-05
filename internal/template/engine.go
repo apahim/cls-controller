@@ -249,10 +249,10 @@ func (e *Engine) getFunctionMap() template.FuncMap {
 		"substr":  substr,
 
 		// Encoding functions
-		"toJson":        toJson,
-		"fromJson":      fromJson,
-		"base64encode":  base64encode,
-		"base64decode":  base64decode,
+		"toJson":       toJson,
+		"fromJson":     fromJson,
+		"base64encode": base64encode,
+		"base64decode": base64decode,
 
 		// Utility functions
 		"default":      defaultValue,

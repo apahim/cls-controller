@@ -44,7 +44,7 @@ type Manager struct {
 	remoteClients   map[string]ctrlclient.Client // cached remote clients by secret key
 	maestroClients  map[string]*MaestroClient    // cached Maestro clients by endpoint/consumer
 	secretClient    ctrlclient.Client            // client for reading secrets
-	secretNamespace string                        // namespace to read secrets from (same as ControllerConfig)
+	secretNamespace string                       // namespace to read secrets from (same as ControllerConfig)
 	logger          *zap.Logger
 	mu              sync.RWMutex
 }
@@ -55,7 +55,7 @@ func NewManager(localClient ctrlclient.Client, logger *zap.Logger) (*Manager, er
 		localClient:     localClient,
 		remoteClients:   make(map[string]ctrlclient.Client),
 		maestroClients:  make(map[string]*MaestroClient),
-		secretClient:    localClient, // Use local client to read secrets
+		secretClient:    localClient,  // Use local client to read secrets
 		secretNamespace: "cls-system", // Default namespace, will be updated when ControllerConfig is loaded
 		logger:          logger.Named("client-manager"),
 	}, nil

@@ -14,10 +14,10 @@ import (
 
 // HTTPAPIClient implements APIClient interface using HTTP REST calls for the new simplified API
 type HTTPAPIClient struct {
-	baseURL        string
+	baseURL         string
 	controllerEmail string // Email to use for X-User-Email header
-	httpClient     *http.Client
-	logger         *zap.Logger
+	httpClient      *http.Client
+	logger          *zap.Logger
 }
 
 // NewHTTPAPIClient creates a new HTTP-based API client for the simplified API
@@ -31,7 +31,7 @@ func NewHTTPAPIClient(baseURL string, controllerEmail string, timeout time.Durat
 	}
 
 	return &HTTPAPIClient{
-		baseURL:        baseURL,
+		baseURL:         baseURL,
 		controllerEmail: controllerEmail,
 		httpClient: &http.Client{
 			Timeout: timeout,

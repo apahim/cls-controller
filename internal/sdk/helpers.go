@@ -12,12 +12,12 @@ import (
 
 // ControllerBase provides a base implementation for controllers
 type ControllerBase struct {
-	client       *Client
-	logger       *zap.Logger
-	name         string
-	clusterID    string
-	nodePoolID   string
-	generation   int64
+	client        *Client
+	logger        *zap.Logger
+	name          string
+	clusterID     string
+	nodePoolID    string
+	generation    int64
 	retryAttempts int
 	retryBackoff  time.Duration
 }
@@ -27,11 +27,11 @@ func NewControllerBase(client *Client, controllerName, clusterID string) *Contro
 	logger, _ := zap.NewProduction()
 
 	return &ControllerBase{
-		client:       client,
-		logger:       logger.Named(controllerName),
-		name:         controllerName,
-		clusterID:    clusterID,
-		generation:   1,
+		client:        client,
+		logger:        logger.Named(controllerName),
+		name:          controllerName,
+		clusterID:     clusterID,
+		generation:    1,
 		retryAttempts: 3,
 		retryBackoff:  5 * time.Second,
 	}

@@ -26,4 +26,3 @@ func EnsureTypesRegistered(scheme *runtime.Scheme) error {
 	scheme.AddKnownTypes(GroupVersion, &ControllerConfig{}, &ControllerConfigList{})
 	return nil
 }
-
