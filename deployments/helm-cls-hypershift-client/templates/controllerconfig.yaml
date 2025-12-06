@@ -336,3 +336,67 @@ spec:
         {{`{{- else -}}`}}
         HostedCluster resource not found
         {{`{{- end }}`}}
+
+    - name: "GCPServiceAttachment"
+      status: >-
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.hostedcluster.status.conditions -}}`}}
+            {{`{{- if eq .type "GCPServiceAttachmentAvailable" -}}{{ .status }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}Unknown{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          Unknown
+        {{`{{- end }}`}}
+      reason: >-
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.hostedcluster.status.conditions -}}`}}
+            {{`{{- if eq .type "GCPServiceAttachmentAvailable" -}}{{ .reason }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}ConditionNotFound{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          ResourceNotFound
+        {{`{{- end }}`}}
+      message: >-
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.hostedcluster.status.conditions -}}`}}
+            {{`{{- if eq .type "GCPServiceAttachmentAvailable" -}}{{ .message }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}GCP Service Attachment condition not yet reported{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          HostedCluster resource not found
+        {{`{{- end }}`}}
+
+    - name: "GCPEndpoint"
+      status: >-
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.hostedcluster.status.conditions -}}`}}
+            {{`{{- if eq .type "GCPEndpointAvailable" -}}{{ .status }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}Unknown{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          Unknown
+        {{`{{- end }}`}}
+      reason: >-
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.hostedcluster.status.conditions -}}`}}
+            {{`{{- if eq .type "GCPEndpointAvailable" -}}{{ .reason }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}ConditionNotFound{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          ResourceNotFound
+        {{`{{- end }}`}}
+      message: >-
+        {{`{{- if .resources.hostedcluster -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.hostedcluster.status.conditions -}}`}}
+            {{`{{- if eq .type "GCPEndpointAvailable" -}}{{ .message }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}GCP Endpoint condition not yet reported{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          HostedCluster resource not found
+        {{`{{- end }}`}}
