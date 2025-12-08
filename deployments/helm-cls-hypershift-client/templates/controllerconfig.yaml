@@ -140,6 +140,7 @@ spec:
                 type: Route
 
           infraID: {{`{{ .cluster.id }}`}}
+          clusterID: {{`{{ .cluster.id }}`}}
 
           dns:
             baseDomain: in.{{`{{ .cluster.name }}`}}-{{`{{ $slug }}`}}.{{ $baseDomain }}
