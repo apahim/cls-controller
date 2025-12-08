@@ -60,6 +60,41 @@ spec:
         data:
           key: {{`{{ .cluster.spec.serviceAccountSigningKey }}`}}
 
+    - name: "named-certificate"
+      description: "Create a HostedCluster named certificate for the API server"
+      resourceManagement:
+        updateStrategy: "in_place"
+      template: |
+        apiVersion: cert-manager.io/v1
+        kind: Certificate
+        metadata:
+          name: external-api-cert
+          namespace: clusters-{{`{{ .cluster.id }}`}}
+        spec:
+          subject:
+            organizations:
+              - "Red Hat - Hypershift"
+          usages:
+            - server auth
+            - client auth
+          duration: 2160h    # 90 days - maximum expiration from Let's Encrypt
+          renewBefore: 720h  # 30 days before expiration - recommended renewal window
+          privateKey:
+            algorithm: RSA
+            encoding: PKCS1
+            size: 2048
+            rotationPolicy: Always
+          dnsNames:
+          {{- $domains := splitList "," .Values.hc_dns_domains }}
+          {{- $baseDomain := index $domains 0 | trim }}
+          {{`{{- $slug := index (split .cluster.created_by "@") 0 }}`}}
+          - "*.{{`{{ .cluster.name }}`}}-{{`{{ $slug }}`}}.{{ $baseDomain }}"
+          secretName: external-api-cert
+          issuerRef:
+            name: public-issuer
+            kind: ClusterIssuer
+            group: cert-manager.io
+
     - name: "hostedcluster"
       description: "Create a HostedCluster based on cls-backend cluster specification"
       resourceManagement:
@@ -72,6 +107,7 @@ spec:
           namespace: clusters-{{`{{ .cluster.id }}`}}
           annotations:
             hypershift.openshift.io/pod-security-admission-label-override: baseline
+            hypershift.openshift.io/skip-kas-conflict-san-validation: "true"
             {{- if .Values.hypershift.controlPlaneOperatorImage }}
             hypershift.openshift.io/control-plane-operator-image: {{ .Values.hypershift.controlPlaneOperatorImage }}
             {{- end }}
@@ -159,6 +195,12 @@ spec:
               # Disable ImageRegistry as GCS buckets not well supported yet. GCP-235
               - ImageRegistry
 
+          configuration:
+            apiServer:
+              servingCerts:
+                namedCertificates:
+                  - servingCertificate:
+                      name: external-api-cert
 
   statusConditions:
     - name: "Applied"
