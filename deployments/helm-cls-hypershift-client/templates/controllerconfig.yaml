@@ -57,7 +57,7 @@ spec:
           name: {{`{{ .cluster.name }}`}}-signing-key
           namespace: clusters-{{`{{ .cluster.id }}`}}
         type: Opaque
-        data:
+        stringData:
           key: {{`{{ .cluster.spec.serviceAccountSigningKey }}`}}
 
     - name: "hostedcluster"
