@@ -140,7 +140,7 @@ spec:
               servicePublishingStrategy:
                 type: Route
 
-          infraID: {{`{{ .cluster.id }}`}}
+          infraID: {{`{{ .cluster.infraID }}`}}
           clusterID: {{`{{ .cluster.id }}`}}
 
           dns:
