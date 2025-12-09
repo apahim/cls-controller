@@ -195,12 +195,25 @@ spec:
               # Disable ImageRegistry as GCS buckets not well supported yet. GCP-235
               - ImageRegistry
 
+          {{`{{- $certReady := false }}`}}
+          {{`{{- if and .resources (index .resources "named-certificate") }}`}}
+            {{`{{- $cert := index .resources "named-certificate" }}`}}
+            {{`{{- if and $cert.status $cert.status.conditions }}`}}
+              {{`{{- range $cert.status.conditions }}`}}
+                {{`{{- if and (eq .type "Ready") (eq .status "True") }}`}}
+                  {{`{{- $certReady = true }}`}}
+                {{`{{- end }}`}}
+              {{`{{- end }}`}}
+            {{`{{- end }}`}}
+          {{`{{- end }}`}}
+          {{`{{- if $certReady }}`}}
           configuration:
             apiServer:
               servingCerts:
                 namedCertificates:
                   - servingCertificate:
                       name: external-api-cert
+          {{`{{- end }}`}}
 
   statusConditions:
     - name: "Applied"
