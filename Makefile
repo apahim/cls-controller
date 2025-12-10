@@ -2,13 +2,13 @@
 # Build, deploy, and manage the generalized CLS controller
 
 # Configuration
-PROJECT_ID ?= apahim-dev-1
+PROJECT_ID ?= patmarti
 CLUSTER_NAME ?= rc-1
 CLUSTER_ZONE ?= us-central1-a
 IMAGE_NAME = cls-controller
-IMAGE_TAG ?= $(shell date +%Y%m%d%H%M%S)
-FULL_IMAGE_NAME ?= gcr.io/$(PROJECT_ID)/$(IMAGE_NAME):$(IMAGE_TAG)
-LATEST_IMAGE_NAME = gcr.io/$(PROJECT_ID)/$(IMAGE_NAME):latest
+IMAGE_TAG ?= $(shell git rev-parse HEAD)
+FULL_IMAGE_NAME ?= quay.io/$(PROJECT_ID)/$(IMAGE_NAME):$(IMAGE_TAG)
+LATEST_IMAGE_NAME = quay.io/$(PROJECT_ID)/$(IMAGE_NAME):latest
 
 # Colors for output
 BLUE = \033[0;34m
@@ -39,10 +39,10 @@ build: ## Build the container image with podman
 	@echo "$(BLUE)📋 Building container image$(NC)"
 	@echo "Image: $(FULL_IMAGE_NAME)"
 	@echo "$(BLUE)📋 Authenticating with GCR$(NC)"
-	@gcloud auth print-access-token | /opt/podman/bin/podman login -u oauth2accesstoken --password-stdin gcr.io
+	@gcloud auth print-access-token | podman login -u oauth2accesstoken --password-stdin gcr.io
 	@echo "$(BLUE)📋 Building with podman$(NC)"
-	@cd .. && REGISTRY_AUTH_FILE=/Users/asegundo/.config/containers/auth.json \
-		/opt/podman/bin/podman build \
+	cd .. && REGISTRY_AUTH_FILE=${HOME}/.config/containers/auth.json \
+		podman build \
 		--platform linux/amd64 \
 		-f cls-controller/Dockerfile \
 		-t "$(FULL_IMAGE_NAME)" \
@@ -58,12 +58,12 @@ push: ## Push the container image to GCR
 		exit 1; \
 	fi
 	@echo "$(BLUE)📋 Authenticating with GCR$(NC)"
-	@gcloud auth print-access-token | /opt/podman/bin/podman login -u oauth2accesstoken --password-stdin gcr.io
+	@gcloud auth print-access-token | podman login -u oauth2accesstoken --password-stdin gcr.io
 	@echo "$(BLUE)📋 Pushing images$(NC)"
-	@REGISTRY_AUTH_FILE=/Users/asegundo/.config/containers/auth.json \
-		/opt/podman/bin/podman push "$(FULL_IMAGE_NAME)"
-	@REGISTRY_AUTH_FILE=/Users/asegundo/.config/containers/auth.json \
-		/opt/podman/bin/podman push "$(LATEST_IMAGE_NAME)"
+	@REGISTRY_AUTH_FILE=${HOME}/.config/containers/auth.json \
+		podman push "$(FULL_IMAGE_NAME)"
+	@REGISTRY_AUTH_FILE=${HOME}/.config/containers/auth.json \
+		podman push "$(LATEST_IMAGE_NAME)"
 	@echo "$(GREEN)✅ Image pushed: $(FULL_IMAGE_NAME)$(NC)"
 
 configure-kubectl: ## Configure kubectl for the GKE cluster
