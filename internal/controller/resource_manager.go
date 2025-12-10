@@ -1004,6 +1004,10 @@ func (c *Controller) addStandardLabels(resource *unstructured.Unstructured, clus
 
 	// Add cluster ID label for resource identification during cleanup
 	labels["cls.redhat.com/cluster-id"] = cluster.ID
+	labels["cluster-id"] = cluster.ID // Also add unprefixed for versioned resource queries
+
+	// Add generation label for versioned resource tracking
+	labels["cluster-generation"] = fmt.Sprintf("%d", cluster.Generation)
 
 	// Add controller name label for safety (only delete resources we created)
 	if c.config != nil && c.config.ControllerName != "" {

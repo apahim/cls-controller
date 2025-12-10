@@ -195,25 +195,121 @@ spec:
               # Disable ImageRegistry as GCS buckets not well supported yet. GCP-235
               - ImageRegistry
 
-          {{`{{- $certReady := false }}`}}
-          {{`{{- if and .resources (index .resources "named-certificate") }}`}}
-            {{`{{- $cert := index .resources "named-certificate" }}`}}
-            {{`{{- if and $cert.status $cert.status.conditions }}`}}
-              {{`{{- range $cert.status.conditions }}`}}
-                {{`{{- if and (eq .type "Ready") (eq .status "True") }}`}}
-                  {{`{{- $certReady = true }}`}}
+          configuration:
+            authentication:
+              type: OIDC
+              oidcProviders:
+              - name: google
+                issuer:
+                  issuerURL: https://accounts.google.com
+                  audiences:
+                  # gcloud SDK client ID
+                  - 32555940559.apps.googleusercontent.com
+                claimMappings:
+                  username:
+                    claim: email
+                  groups:
+                    # Google Workspace domain → Kubernetes group
+                    claim: hd
+                    prefix: ""
+
+            {{`{{- $certReady := false }}`}}
+            {{`{{- if and .resources (index .resources "named-certificate") }}`}}
+              {{`{{- $cert := index .resources "named-certificate" }}`}}
+              {{`{{- if and $cert.status $cert.status.conditions }}`}}
+                {{`{{- range $cert.status.conditions }}`}}
+                  {{`{{- if and (eq .type "Ready") (eq .status "True") }}`}}
+                    {{`{{- $certReady = true }}`}}
+                  {{`{{- end }}`}}
                 {{`{{- end }}`}}
               {{`{{- end }}`}}
             {{`{{- end }}`}}
-          {{`{{- end }}`}}
-          {{`{{- if $certReady }}`}}
-          configuration:
+            {{`{{- if $certReady }}`}}
             apiServer:
               servingCerts:
                 namedCertificates:
                   - servingCertificate:
                       name: external-api-cert
           {{`{{- end }}`}}
+
+    - name: "rbac-setup-job"
+      description: "Create a Job to configure OIDC RBAC in the hosted cluster"
+      resourceManagement:
+        updateStrategy: "in_place"
+      template: |
+        apiVersion: batch/v1
+        kind: Job
+        metadata:
+          name: cls-rbac-setup
+          namespace: clusters-{{`{{ .cluster.id }}`}}-{{`{{ .cluster.name }}`}}
+        spec:
+          ttlSecondsAfterFinished: 300
+          backoffLimit: 10
+          activeDeadlineSeconds: 1800
+          template:
+            metadata:
+              labels:
+                job: rbac-setup
+            spec:
+              restartPolicy: OnFailure
+              serviceAccountName: default
+              containers:
+              - name: oc
+                image: quay.io/openshift/origin-cli:latest
+                command:
+                - /bin/bash
+                - -c
+                - |
+                  set -euo pipefail
+
+                  echo "Waiting for API server to be fully ready (up to 25 minutes)..."
+                  ATTEMPTS=0
+                  MAX_ATTEMPTS=150
+
+                  while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
+                    if kubectl --kubeconfig=/kubeconfig/value get --raw /healthz &>/dev/null; then
+                      echo "API server is ready after $((ATTEMPTS * 10)) seconds"
+                      break
+                    fi
+                    ATTEMPTS=$((ATTEMPTS + 1))
+                    echo "Attempt $ATTEMPTS/$MAX_ATTEMPTS: API server not ready yet, waiting 10s..."
+                    sleep 10
+                  done
+
+                  if [ $ATTEMPTS -eq $MAX_ATTEMPTS ]; then
+                    echo "ERROR: API server did not become ready after $((MAX_ATTEMPTS * 10)) seconds"
+                    exit 1
+                  fi
+
+                  echo "Creating ClusterRoleBinding for redhat.com domain..."
+                  kubectl --kubeconfig=/kubeconfig/value apply -f - <<EOF
+                  apiVersion: rbac.authorization.k8s.io/v1
+                  kind: ClusterRoleBinding
+                  metadata:
+                    name: redhat-domain-admins
+                  roleRef:
+                    apiGroup: rbac.authorization.k8s.io
+                    kind: ClusterRole
+                    name: cluster-admin
+                  subjects:
+                  - apiGroup: rbac.authorization.k8s.io
+                    kind: Group
+                    name: redhat.com
+                  EOF
+
+                  echo "ClusterRoleBinding created successfully"
+
+                  echo "Verifying ClusterRoleBinding..."
+                  kubectl --kubeconfig=/kubeconfig/value get clusterrolebinding redhat-domain-admins -o yaml
+                volumeMounts:
+                - name: kubeconfig
+                  mountPath: /kubeconfig
+                  readOnly: true
+              volumes:
+              - name: kubeconfig
+                secret:
+                  secretName: {{`{{ .cluster.id }}`}}-kubeconfig
+                  defaultMode: 0600
 
   statusConditions:
     - name: "Applied"
