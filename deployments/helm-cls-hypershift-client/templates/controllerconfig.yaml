@@ -235,12 +235,14 @@ spec:
     - name: "rbac-setup-job"
       description: "Create a Job to configure OIDC RBAC in the hosted cluster"
       resourceManagement:
-        updateStrategy: "in_place"
+        updateStrategy: "versioned"  # Required for Jobs (immutable resources)
+        newGenerationOnly: true      # Only recreate on generation changes
+        keepVersions: 2              # Keep 2 completed versions for history
       template: |
         apiVersion: batch/v1
         kind: Job
         metadata:
-          name: cls-rbac-setup
+          name: "cls-rbac-setup-gen-{{`{{ .cluster.generation }}`}}-{{`{{ .timestamp }}`}}"
           namespace: clusters-{{`{{ .cluster.id }}`}}-{{`{{ .cluster.name }}`}}
         spec:
           ttlSecondsAfterFinished: 300
