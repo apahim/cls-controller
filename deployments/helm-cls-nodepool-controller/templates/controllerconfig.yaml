@@ -4,7 +4,7 @@
 #   - clusterName: Currently uses .cluster.name from fetched cluster data
 #   - release.image: Defaults to a specific OCP release image
 #   - platform.gcp.zone: Defaults to cluster region + "-a"
-#   - platform.gcp.image: Defaults to a specific RHCOS image
+#   - platform.gcp.image: Defaults to rhcos-cloud RHCOS image
 apiVersion: cls.redhat.com/v1alpha1
 kind: ControllerConfig
 metadata:
@@ -56,7 +56,7 @@ spec:
             gcp:
               machineType: {{`{{ .nodepool.spec.platform.gcp.instanceType | default "n2-standard-4" }}`}}
               zone: {{`{{ .nodepool.spec.platform.gcp.zone | default (printf "%s-a" .cluster.spec.platform.gcp.region) }}`}}
-              image: {{`{{ .nodepool.spec.platform.gcp.image | default "projects/redhat-marketplace-dev/global/images/redhat-coreos-osd-418-x86-64-202508060022" }}`}}
+              image: {{`{{ .nodepool.spec.platform.gcp.image | default "projects/rhcos-cloud/global/images/rhcos-9-6-20250925-0-gcp-x86-64" }}`}}
               {{`{{- if .nodepool.spec.platform.gcp.provisioningModel }}`}}
               provisioningModel: {{`{{ .nodepool.spec.platform.gcp.provisioningModel }}`}}
               {{`{{- end }}`}}
