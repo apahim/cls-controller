@@ -313,7 +313,7 @@ spec:
               volumes:
               - name: kubeconfig
                 secret:
-                  secretName: {{`{{ .cluster.id }}`}}-kubeconfig
+                  secretName: service-network-admin-kubeconfig
                   defaultMode: 0600
 
   statusConditions:
