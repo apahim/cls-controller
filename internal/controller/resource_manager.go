@@ -512,6 +512,7 @@ func (c *Controller) evaluateAndReportStatus(event *sdk.ClusterEvent, cluster *s
 					zap.String("resource_name", name),
 					zap.String("resource_kind", resource.GetKind()),
 					zap.String("resource_full_name", resource.GetName()),
+					zap.String("cluster_id", cluster.ID),
 				)
 
 				// Log job status specifically for debugging
@@ -529,6 +530,7 @@ func (c *Controller) evaluateAndReportStatus(event *sdk.ClusterEvent, cluster *s
 				c.logger.Warn("Failed to refresh resource status, using cached",
 					zap.String("resource_name", name),
 					zap.String("resource_full_name", resource.GetName()),
+					zap.String("cluster_id", cluster.ID),
 					zap.Error(err),
 				)
 			}
@@ -553,6 +555,7 @@ func (c *Controller) evaluateAndReportStatus(event *sdk.ClusterEvent, cluster *s
 		if err != nil {
 			c.logger.Error("Failed to render status condition",
 				zap.String("condition", conditionConfig.Name),
+				zap.String("cluster_id", cluster.ID),
 				zap.Error(err),
 			)
 			continue
@@ -734,6 +737,10 @@ func (c *Controller) cleanupOldGenerations(ctx context.Context, resourceClient c
 
 	err := resourceClient.List(ctx, namespace, labels, resourceList)
 	if err != nil {
+		c.logger.Error("Failed to list resources for cleanup",
+			zap.String("cluster_id", clusterID),
+			zap.Error(err),
+		)
 		return fmt.Errorf("failed to list resources for cleanup: %w", err)
 	}
 
@@ -1577,6 +1584,10 @@ func (c *Controller) cleanupOldNodePoolGenerations(ctx context.Context, resource
 
 	err := resourceClient.List(ctx, namespace, labels, resourceList)
 	if err != nil {
+		c.logger.Error("Failed to list nodepool resources for cleanup",
+			zap.String("nodepool_id", nodepoolID),
+			zap.Error(err),
+		)
 		return fmt.Errorf("failed to list nodepool resources for cleanup: %w", err)
 	}
 
@@ -1654,6 +1665,11 @@ func (c *Controller) cleanupCompletedNodePoolVersions(ctx context.Context, resou
 
 	err := resourceClient.List(ctx, namespace, labels, resourceList)
 	if err != nil {
+		c.logger.Error("Failed to list nodepool resources for version cleanup",
+			zap.String("nodepool_id", nodepoolID),
+			zap.Int64("generation", currentGeneration),
+			zap.Error(err),
+		)
 		return fmt.Errorf("failed to list nodepool resources for version cleanup: %w", err)
 	}
 
@@ -1821,6 +1837,7 @@ func (c *Controller) deleteNodePoolResourcesByLabels(ctx context.Context, resour
 func (c *Controller) evaluateAndReportNodePoolStatus(event *sdk.NodePoolEvent, nodepool *sdk.NodePool, cluster *sdk.Cluster, resources map[string]*unstructured.Unstructured) error {
 	c.logger.Info("Starting nodepool status evaluation and reporting",
 		zap.String("nodepool_id", event.NodePoolID),
+		zap.String("cluster_id", event.ClusterID),
 		zap.Int("resource_count", len(resources)),
 	)
 
@@ -1833,7 +1850,11 @@ func (c *Controller) evaluateAndReportNodePoolStatus(event *sdk.NodePoolEvent, n
 	// Get the appropriate client for refreshing resource status
 	resourceClient, err := c.clientManager.GetClient(ctx, c.controllerConfig.Spec.Target, cluster)
 	if err != nil {
-		c.logger.Warn("Failed to get resource client for nodepool status refresh", zap.Error(err))
+		c.logger.Warn("Failed to get resource client for nodepool status refresh",
+			zap.String("nodepool_id", event.NodePoolID),
+			zap.String("cluster_id", event.ClusterID),
+			zap.Error(err),
+		)
 	}
 
 	// Refresh resources with current status from Kubernetes
@@ -1848,11 +1869,15 @@ func (c *Controller) evaluateAndReportNodePoolStatus(event *sdk.NodePoolEvent, n
 				c.logger.Info("Refreshed nodepool resource status",
 					zap.String("resource_name", name),
 					zap.String("resource_kind", resource.GetKind()),
+					zap.String("nodepool_id", nodepool.ID),
+					zap.String("cluster_id", nodepool.ClusterID),
 				)
 			} else {
 				refreshedResources[name] = resource
 				c.logger.Warn("Failed to refresh nodepool resource status, using cached",
 					zap.String("resource_name", name),
+					zap.String("nodepool_id", nodepool.ID),
+					zap.String("cluster_id", nodepool.ClusterID),
 					zap.Error(err),
 				)
 			}
@@ -1878,6 +1903,8 @@ func (c *Controller) evaluateAndReportNodePoolStatus(event *sdk.NodePoolEvent, n
 		if err != nil {
 			c.logger.Error("Failed to render nodepool status condition",
 				zap.String("condition", conditionConfig.Name),
+				zap.String("nodepool_id", nodepool.ID),
+				zap.String("cluster_id", nodepool.ClusterID),
 				zap.Error(err),
 			)
 			continue
@@ -1911,17 +1938,23 @@ func (c *Controller) evaluateAndReportNodePoolStatus(event *sdk.NodePoolEvent, n
 
 	c.logger.Info("Publishing nodepool status update to cls-backend",
 		zap.String("nodepool_id", event.NodePoolID),
+		zap.String("cluster_id", event.ClusterID),
 		zap.Int("condition_count", len(update.Conditions)),
 	)
 
 	err = c.sdkClient.ReportStatus(update)
 	if err != nil {
-		c.logger.Error("Failed to publish nodepool status update", zap.Error(err))
+		c.logger.Error("Failed to publish nodepool status update",
+			zap.String("nodepool_id", event.NodePoolID),
+			zap.String("cluster_id", event.ClusterID),
+			zap.Error(err),
+		)
 		return err
 	}
 
 	c.logger.Info("NodePool status update published successfully",
 		zap.String("nodepool_id", event.NodePoolID),
+		zap.String("cluster_id", event.ClusterID),
 	)
 
 	return nil
