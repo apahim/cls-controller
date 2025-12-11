@@ -1704,7 +1704,7 @@ func (c *Controller) cleanupCompletedNodePoolVersions(ctx context.Context, resou
 }
 
 // deleteAllNodePoolResources deletes all resources created by this controller for a specific nodepool
-func (c *Controller) deleteAllNodePoolResources(nodepoolID string) error {
+func (c *Controller) deleteAllNodePoolResources(nodepoolID string, clusterID string) error {
 	if c.controllerConfig == nil {
 		c.logger.Warn("No controller configuration loaded, skipping nodepool resource cleanup")
 		return nil
@@ -1717,9 +1717,8 @@ func (c *Controller) deleteAllNodePoolResources(nodepoolID string) error {
 	defer cancel()
 
 	// Create a minimal cluster object for client resolution
-	// For nodepool cleanup, we need to get cluster ID from somewhere - use empty for now
-	// The client manager should handle this case gracefully
-	minimalCluster := &sdk.Cluster{ID: ""}
+	// Use the cluster ID from the event to ensure we connect to the correct Management Cluster
+	minimalCluster := &sdk.Cluster{ID: clusterID}
 
 	// Get the appropriate client for this target
 	resourceClient, err := c.clientManager.GetClient(ctx, c.controllerConfig.Spec.Target, minimalCluster)

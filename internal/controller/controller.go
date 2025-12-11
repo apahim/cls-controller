@@ -447,7 +447,7 @@ func (c *Controller) handleNodePoolDeleted(event *sdk.NodePoolEvent, nodepool *s
 	)
 
 	// Clean up resources created by this controller for the deleted nodepool
-	err := c.deleteAllNodePoolResources(event.NodePoolID)
+	err := c.deleteAllNodePoolResources(event.NodePoolID, event.ClusterID)
 	if err != nil {
 		c.logger.Error("Failed to clean up resources during nodepool deletion",
 			zap.String("nodepool_id", event.NodePoolID),
