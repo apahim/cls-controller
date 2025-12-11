@@ -145,6 +145,103 @@ func (e *Engine) RenderStatusCondition(conditionName string, cluster *sdk.Cluste
 	return status, reason, message, nil
 }
 
+// RenderNodePoolResource renders a Kubernetes resource from a template with nodepool context
+func (e *Engine) RenderNodePoolResource(resourceName string, nodepool *sdk.NodePool, cluster *sdk.Cluster, resources map[string]*unstructured.Unstructured) (*unstructured.Unstructured, error) {
+	tmpl, exists := e.templates[resourceName]
+	if !exists {
+		return nil, fmt.Errorf("template not found for resource: %s", resourceName)
+	}
+
+	// Build template context for nodepool (includes cluster context)
+	context := e.buildNodePoolTemplateContext(nodepool, cluster, resources)
+
+	// Render template
+	var buf bytes.Buffer
+	if err := tmpl.Execute(&buf, context); err != nil {
+		return nil, fmt.Errorf("failed to execute template: %w", err)
+	}
+
+	// Parse YAML to unstructured
+	var obj unstructured.Unstructured
+	if err := yaml.Unmarshal(buf.Bytes(), &obj); err != nil {
+		return nil, fmt.Errorf("failed to parse rendered YAML: %w", err)
+	}
+
+	e.logger.Debug("Rendered nodepool resource template",
+		zap.String("resource_name", resourceName),
+		zap.String("kind", obj.GetKind()),
+		zap.String("name", obj.GetName()),
+		zap.String("namespace", obj.GetNamespace()),
+	)
+
+	return &obj, nil
+}
+
+// RenderNodePoolStatusCondition renders a status condition template for nodepools
+func (e *Engine) RenderNodePoolStatusCondition(conditionName string, nodepool *sdk.NodePool, cluster *sdk.Cluster, resources map[string]*unstructured.Unstructured) (status, reason, message string, err error) {
+	context := e.buildNodePoolTemplateContext(nodepool, cluster, resources)
+	conditionKey := fmt.Sprintf("status_%s", conditionName)
+
+	// Render status
+	if statusTmpl, exists := e.templates[conditionKey+"_status"]; exists {
+		status, err = e.renderStringTemplate(statusTmpl, context)
+		if err != nil {
+			return "", "", "", fmt.Errorf("failed to render status for condition %s: %w", conditionName, err)
+		}
+	}
+
+	// Render reason
+	if reasonTmpl, exists := e.templates[conditionKey+"_reason"]; exists {
+		reason, err = e.renderStringTemplate(reasonTmpl, context)
+		if err != nil {
+			return "", "", "", fmt.Errorf("failed to render reason for condition %s: %w", conditionName, err)
+		}
+	}
+
+	// Render message
+	if messageTmpl, exists := e.templates[conditionKey+"_message"]; exists {
+		message, err = e.renderStringTemplate(messageTmpl, context)
+		if err != nil {
+			return "", "", "", fmt.Errorf("failed to render message for condition %s: %w", conditionName, err)
+		}
+	}
+
+	return status, reason, message, nil
+}
+
+// buildNodePoolTemplateContext builds the context object for nodepool template rendering
+func (e *Engine) buildNodePoolTemplateContext(nodepool *sdk.NodePool, cluster *sdk.Cluster, resources map[string]*unstructured.Unstructured) map[string]interface{} {
+	context := map[string]interface{}{
+		"nodepool":  e.buildNodePoolContext(nodepool),
+		"cluster":   e.buildClusterContext(cluster),
+		"resources": e.buildResourcesContext(resources),
+		"controller": map[string]interface{}{
+			"name": "cls-controller", // TODO: get from config
+		},
+		"timestamp": time.Now().Unix(),
+	}
+
+	return context
+}
+
+// buildNodePoolContext builds the nodepool context from the nodepool spec
+func (e *Engine) buildNodePoolContext(nodepool *sdk.NodePool) map[string]interface{} {
+	nodepoolCtx := map[string]interface{}{
+		"id":         nodepool.ID,
+		"cluster_id": nodepool.ClusterID,
+		"name":       nodepool.Name,
+		"generation": nodepool.Generation,
+	}
+
+	// Parse spec JSON to make it accessible in templates
+	var spec map[string]interface{}
+	if err := json.Unmarshal(nodepool.Spec, &spec); err == nil {
+		nodepoolCtx["spec"] = spec
+	}
+
+	return nodepoolCtx
+}
+
 // compileTemplate compiles a single template with our function map
 func (e *Engine) compileTemplate(name, templateStr string) (*template.Template, error) {
 	// Preprocess template to handle hyphenated resource names

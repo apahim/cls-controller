@@ -165,10 +165,11 @@ const (
 	EventTypeClusterUpdated   = "cluster.updated"
 	EventTypeClusterDeleted   = "cluster.deleted"
 	EventTypeClusterReconcile = "cluster.reconcile"
-	EventTypeNodePoolCreated  = "nodepool.created"
-	EventTypeNodePoolUpdated  = "nodepool.updated"
-	EventTypeNodePoolDeleted  = "nodepool.deleted"
-	EventTypeControllerStart  = "controller.start"
+	EventTypeNodePoolCreated   = "nodepool.created"
+	EventTypeNodePoolUpdated   = "nodepool.updated"
+	EventTypeNodePoolDeleted   = "nodepool.deleted"
+	EventTypeNodePoolReconcile = "nodepool.reconcile"
+	EventTypeControllerStart   = "controller.start"
 	EventTypeControllerStop   = "controller.stop"
 )
 
@@ -288,10 +289,22 @@ func NewErrorInfo(errorType, errorCode, message string, userActionable bool) *Er
 	}
 }
 
-// NewStatusUpdate creates a new status update
+// NewStatusUpdate creates a new status update for clusters
 func NewStatusUpdate(clusterID, controllerName string, observedGeneration int64) *StatusUpdate {
 	return &StatusUpdate{
 		ClusterID:          clusterID,
+		ControllerName:     controllerName,
+		ObservedGeneration: observedGeneration,
+		Conditions:         []Condition{},
+		Metadata:           make(map[string]interface{}),
+		Timestamp:          time.Now(),
+	}
+}
+
+// NewNodePoolStatusUpdate creates a new status update for nodepools
+func NewNodePoolStatusUpdate(nodepoolID, controllerName string, observedGeneration int64) *StatusUpdate {
+	return &StatusUpdate{
+		NodePoolID:         nodepoolID,
 		ControllerName:     controllerName,
 		ObservedGeneration: observedGeneration,
 		Conditions:         []Condition{},

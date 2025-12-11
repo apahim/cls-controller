@@ -202,10 +202,77 @@ func (c *Controller) HandleClusterEvent(event *sdk.ClusterEvent) error {
 	}
 }
 
-// HandleNodePoolEvent handles nodepool events (not implemented yet)
+// HandleNodePoolEvent handles nodepool lifecycle events (implements sdk.EventHandler)
 func (c *Controller) HandleNodePoolEvent(event *sdk.NodePoolEvent) error {
-	c.logger.Debug("NodePool events not implemented", zap.String("event_type", event.Type))
-	return nil
+	log := c.logger.With(
+		zap.String("event_type", event.Type),
+		zap.String("cluster_id", event.ClusterID),
+		zap.String("nodepool_id", event.NodePoolID),
+	)
+
+	log.Info("Handling nodepool event")
+
+	// Check if we have a valid controller configuration
+	if c.controllerConfig == nil {
+		log.Warn("No controller configuration loaded, ignoring event")
+		return nil
+	}
+
+	// Handle deletion events early - deleted nodepools can't be fetched from API
+	if event.Type == sdk.EventTypeNodePoolDeleted {
+		log.Info("Processing nodepool deletion event")
+		return c.handleNodePoolDeleted(event, nil)
+	}
+
+	// Fetch nodepool spec from API for non-deletion events
+	ctx := context.Background()
+	apiClient := c.sdkClient.GetAPIClient()
+	if apiClient == nil {
+		log.Error("API client not available")
+		return c.reportNodePoolError(event, "APIClientUnavailable", fmt.Errorf("API client not available"))
+	}
+
+	nodepool, err := apiClient.GetNodePool(ctx, event.NodePoolID)
+	if err != nil {
+		log.Error("Failed to fetch nodepool from API", zap.Error(err))
+		return c.reportNodePoolError(event, "NodePoolFetchFailed", err)
+	}
+
+	log.Debug("Fetched nodepool spec",
+		zap.String("nodepool_name", nodepool.Name),
+		zap.Int64("nodepool_generation", nodepool.Generation),
+	)
+
+	// Fetch the parent cluster to get cluster name and other context
+	cluster, err := apiClient.GetCluster(ctx, event.ClusterID)
+	if err != nil {
+		log.Error("Failed to fetch cluster from API", zap.Error(err))
+		return c.reportNodePoolError(event, "ClusterFetchFailed", err)
+	}
+
+	log.Debug("Fetched cluster spec for nodepool context",
+		zap.String("cluster_name", cluster.Name),
+		zap.String("cluster_id", cluster.ID),
+	)
+
+	// Check preconditions for nodepool
+	if !c.evaluateNodePoolPreconditions(nodepool) {
+		log.Info("Preconditions not met, skipping resource creation")
+		return c.reportNodePoolPreconditionFailure(event, nodepool)
+	}
+
+	// Process the event based on type
+	switch event.Type {
+	case sdk.EventTypeNodePoolCreated:
+		return c.handleNodePoolCreated(event, nodepool, cluster)
+	case sdk.EventTypeNodePoolUpdated:
+		return c.handleNodePoolUpdated(event, nodepool, cluster)
+	case sdk.EventTypeNodePoolReconcile:
+		return c.handleNodePoolReconcile(event, nodepool, cluster)
+	default:
+		log.Warn("Unknown nodepool event type", zap.String("event_type", event.Type))
+		return nil
+	}
 }
 
 // HandleControllerEvent handles controller events (not implemented yet)
@@ -331,6 +398,128 @@ func (c *Controller) reportError(event *sdk.ClusterEvent, reason string, err err
 		false,
 	)
 	update.SetError(errorInfo)
+
+	return c.sdkClient.ReportStatus(update)
+}
+
+// handleNodePoolCreated processes nodepool creation events
+func (c *Controller) handleNodePoolCreated(event *sdk.NodePoolEvent, nodepool *sdk.NodePool, cluster *sdk.Cluster) error {
+	c.logger.Info("Processing nodepool creation",
+		zap.String("nodepool_id", event.NodePoolID),
+		zap.String("cluster_id", event.ClusterID),
+	)
+
+	// Create or update all resources for this nodepool
+	resources, err := c.getOrCreateAllNodePoolResources(nodepool, cluster)
+	if err != nil {
+		c.logger.Error("Failed to create nodepool resources", zap.Error(err))
+		return c.reportNodePoolError(event, "ResourceCreationFailed", err)
+	}
+
+	// Report status
+	return c.evaluateAndReportNodePoolStatus(event, nodepool, cluster, resources)
+}
+
+// handleNodePoolUpdated processes nodepool update events
+func (c *Controller) handleNodePoolUpdated(event *sdk.NodePoolEvent, nodepool *sdk.NodePool, cluster *sdk.Cluster) error {
+	c.logger.Info("Processing nodepool update",
+		zap.String("nodepool_id", event.NodePoolID),
+		zap.String("cluster_id", event.ClusterID),
+	)
+
+	// Create or update all resources for this nodepool
+	resources, err := c.getOrCreateAllNodePoolResources(nodepool, cluster)
+	if err != nil {
+		c.logger.Error("Failed to update nodepool resources", zap.Error(err))
+		return c.reportNodePoolError(event, "ResourceUpdateFailed", err)
+	}
+
+	// Report status
+	return c.evaluateAndReportNodePoolStatus(event, nodepool, cluster, resources)
+}
+
+// handleNodePoolDeleted processes nodepool deletion events
+// Note: nodepool parameter can be nil for deletion events since deleted nodepools can't be fetched from API
+func (c *Controller) handleNodePoolDeleted(event *sdk.NodePoolEvent, nodepool *sdk.NodePool) error {
+	c.logger.Info("Processing nodepool deletion",
+		zap.String("nodepool_id", event.NodePoolID),
+		zap.String("cluster_id", event.ClusterID),
+	)
+
+	// Clean up resources created by this controller for the deleted nodepool
+	err := c.deleteAllNodePoolResources(event.NodePoolID)
+	if err != nil {
+		c.logger.Error("Failed to clean up resources during nodepool deletion",
+			zap.String("nodepool_id", event.NodePoolID),
+			zap.Error(err),
+		)
+		// Log error but don't fail - nodepool is already deleted from cls-backend
+		// We don't want to get stuck in retry loop over cleanup failures
+	}
+
+	c.logger.Info("NodePool deletion processed successfully", zap.String("nodepool_id", event.NodePoolID))
+
+	// Don't report status back to cls-backend - the nodepool is already deleted
+	// Just acknowledge the message by returning nil
+	return nil
+}
+
+// handleNodePoolReconcile processes nodepool reconciliation events
+func (c *Controller) handleNodePoolReconcile(event *sdk.NodePoolEvent, nodepool *sdk.NodePool, cluster *sdk.Cluster) error {
+	c.logger.Info("Processing nodepool reconciliation",
+		zap.String("nodepool_id", event.NodePoolID),
+		zap.String("cluster_id", event.ClusterID),
+	)
+
+	// Same logic as update - check current state and ensure resources are correct
+	resources, err := c.getOrCreateAllNodePoolResources(nodepool, cluster)
+	if err != nil {
+		c.logger.Error("Failed to reconcile nodepool resources", zap.Error(err))
+		return c.reportNodePoolError(event, "ResourceReconciliationFailed", err)
+	}
+
+	// Report status
+	return c.evaluateAndReportNodePoolStatus(event, nodepool, cluster, resources)
+}
+
+// reportNodePoolError reports an error status for nodepool events
+func (c *Controller) reportNodePoolError(event *sdk.NodePoolEvent, reason string, err error) error {
+	update := sdk.NewNodePoolStatusUpdate(event.NodePoolID, c.config.ControllerName, 0)
+
+	// Also set cluster ID for context
+	update.ClusterID = event.ClusterID
+
+	update.AddCondition(sdk.NewCondition(
+		"Applied",
+		"False",
+		reason,
+		err.Error(),
+	))
+
+	errorInfo := sdk.NewErrorInfo(
+		sdk.ErrorTypeSystem,
+		"",
+		err.Error(),
+		false,
+	)
+	update.SetError(errorInfo)
+
+	return c.sdkClient.ReportStatus(update)
+}
+
+// reportNodePoolPreconditionFailure reports a precondition failure for nodepool events
+func (c *Controller) reportNodePoolPreconditionFailure(event *sdk.NodePoolEvent, nodepool *sdk.NodePool) error {
+	update := sdk.NewNodePoolStatusUpdate(event.NodePoolID, c.config.ControllerName, nodepool.Generation)
+
+	// Also set cluster ID for context
+	update.ClusterID = nodepool.ClusterID
+
+	update.AddCondition(sdk.NewCondition(
+		"Applied",
+		"False",
+		"PreconditionsNotMet",
+		"NodePool does not meet controller preconditions",
+	))
 
 	return c.sdkClient.ReportStatus(update)
 }
