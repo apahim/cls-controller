@@ -1,0 +1,32 @@
+# Configuration values for cls-nodepool-controller
+
+# GCP Configuration
+gcp:
+  projectId: "apahim-dev-1"
+
+# Controller Configuration
+controller:
+  name: "cls-nodepool-controller"
+  namespace: "cls-system"
+  image:
+    repository: "quay.io/apahim/cls-controller"
+    tag: "latest"
+
+  # API Configuration
+  api:
+    baseUrl: "http://cls-backend-apps-cls-backend-application.cls-system.svc.cluster.local:80/api/v1"
+
+# Pub/Sub Configuration for nodepool events
+pubsub:
+  topic: "nodepool-events"
+  subscription: "nodepool-events-hypershift-client"
+
+# Service Account Names
+# Using the same service account as cls-hypershift-client for remote cluster access
+serviceAccount:
+  kubernetes: "cls-hypershift-client"
+  gcp: "cls-hypershift-client"
+
+# Remote cluster configuration
+remoteCluster:
+  secretName: "remote-gke-cluster"

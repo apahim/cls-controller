@@ -310,7 +310,7 @@ func (c *Client) handleEventMessage(ctx context.Context, msg *pubsub.Message) er
 	switch eventType {
 	case EventTypeClusterCreated, EventTypeClusterUpdated, EventTypeClusterDeleted, EventTypeClusterReconcile:
 		return c.handleClusterEvent(ctx, msg.Data, eventType)
-	case EventTypeNodePoolCreated, EventTypeNodePoolUpdated, EventTypeNodePoolDeleted:
+	case EventTypeNodePoolCreated, EventTypeNodePoolUpdated, EventTypeNodePoolDeleted, EventTypeNodePoolReconcile:
 		return c.handleNodePoolEvent(ctx, msg.Data, eventType)
 	case EventTypeControllerStart, EventTypeControllerStop:
 		return c.handleControllerEvent(ctx, msg.Data, eventType)
