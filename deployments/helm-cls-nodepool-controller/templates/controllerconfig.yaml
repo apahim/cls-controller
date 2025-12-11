@@ -120,7 +120,7 @@ spec:
         {{`{{- if .resources.nodepool -}}`}}
           {{`{{- $found := false -}}`}}
           {{`{{- range .resources.nodepool.status.conditions -}}`}}
-            {{`{{- if eq .type "Ready" -}}{{ .message }}{{- $found = true -}}{{- end -}}`}}
+            {{`{{- if eq .type "Ready" -}}{{ .message | default "NodePool is ready" }}{{- $found = true -}}{{- end -}}`}}
           {{`{{- end -}}`}}
           {{`{{- if not $found -}}`}}Ready condition not yet reported by NodePool{{`{{- end -}}`}}
         {{`{{- else -}}`}}
