@@ -288,7 +288,10 @@ func (c *Controller) handleClusterCreated(event *sdk.ClusterEvent, cluster *sdk.
 	// Create or update all resources
 	resources, err := c.getOrCreateAllResources(cluster)
 	if err != nil {
-		c.logger.Error("Failed to create resources", zap.Error(err))
+		c.logger.Error("Failed to create resources",
+			zap.String("cluster_id", event.ClusterID),
+			zap.Error(err),
+		)
 		return c.reportError(event, "ResourceCreationFailed", err)
 	}
 
@@ -303,7 +306,10 @@ func (c *Controller) handleClusterUpdated(event *sdk.ClusterEvent, cluster *sdk.
 	// Create or update all resources
 	resources, err := c.getOrCreateAllResources(cluster)
 	if err != nil {
-		c.logger.Error("Failed to update resources", zap.Error(err))
+		c.logger.Error("Failed to update resources",
+			zap.String("cluster_id", event.ClusterID),
+			zap.Error(err),
+		)
 		return c.reportError(event, "ResourceUpdateFailed", err)
 	}
 
@@ -341,7 +347,10 @@ func (c *Controller) handleClusterReconcile(event *sdk.ClusterEvent, cluster *sd
 	// Same logic as update - check current state and ensure resources are correct
 	resources, err := c.getOrCreateAllResources(cluster)
 	if err != nil {
-		c.logger.Error("Failed to reconcile resources", zap.Error(err))
+		c.logger.Error("Failed to reconcile resources",
+			zap.String("cluster_id", event.ClusterID),
+			zap.Error(err),
+		)
 		return c.reportError(event, "ResourceReconciliationFailed", err)
 	}
 
@@ -412,7 +421,11 @@ func (c *Controller) handleNodePoolCreated(event *sdk.NodePoolEvent, nodepool *s
 	// Create or update all resources for this nodepool
 	resources, err := c.getOrCreateAllNodePoolResources(nodepool, cluster)
 	if err != nil {
-		c.logger.Error("Failed to create nodepool resources", zap.Error(err))
+		c.logger.Error("Failed to create nodepool resources",
+			zap.String("nodepool_id", event.NodePoolID),
+			zap.String("cluster_id", event.ClusterID),
+			zap.Error(err),
+		)
 		return c.reportNodePoolError(event, "ResourceCreationFailed", err)
 	}
 
@@ -430,7 +443,11 @@ func (c *Controller) handleNodePoolUpdated(event *sdk.NodePoolEvent, nodepool *s
 	// Create or update all resources for this nodepool
 	resources, err := c.getOrCreateAllNodePoolResources(nodepool, cluster)
 	if err != nil {
-		c.logger.Error("Failed to update nodepool resources", zap.Error(err))
+		c.logger.Error("Failed to update nodepool resources",
+			zap.String("nodepool_id", event.NodePoolID),
+			zap.String("cluster_id", event.ClusterID),
+			zap.Error(err),
+		)
 		return c.reportNodePoolError(event, "ResourceUpdateFailed", err)
 	}
 
@@ -474,7 +491,11 @@ func (c *Controller) handleNodePoolReconcile(event *sdk.NodePoolEvent, nodepool 
 	// Same logic as update - check current state and ensure resources are correct
 	resources, err := c.getOrCreateAllNodePoolResources(nodepool, cluster)
 	if err != nil {
-		c.logger.Error("Failed to reconcile nodepool resources", zap.Error(err))
+		c.logger.Error("Failed to reconcile nodepool resources",
+			zap.String("nodepool_id", event.NodePoolID),
+			zap.String("cluster_id", event.ClusterID),
+			zap.Error(err),
+		)
 		return c.reportNodePoolError(event, "ResourceReconciliationFailed", err)
 	}
 
