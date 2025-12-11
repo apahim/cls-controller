@@ -1,0 +1,172 @@
+# TODO: The following fields currently use hardcoded defaults because they are not
+# being populated correctly in the cls-backend nodepool spec. These should be fixed
+# in the backend and made required fields:
+#   - clusterName: Currently uses .cluster.name from fetched cluster data
+#   - release.image: Defaults to a specific OCP release image
+#   - platform.gcp.zone: Defaults to "us-central1-a"
+#   - platform.gcp.image: Defaults to a specific RHCOS image
+apiVersion: cls.redhat.com/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: {{ .Values.controller.name }}
+  namespace: {{ .Values.controller.namespace }}
+spec:
+  name: "{{ .Values.controller.name }}"
+  description: "Creates NodePool resources on management cluster based on cls-backend nodepool specs"
+  target:
+    type: "kube-api"
+    authMethod: "workload-identity"
+    secretRef:
+      name: "{{ .Values.remoteCluster.secretName }}"
+
+  resources:
+    - name: "nodepool"
+      description: "Create a NodePool based on cls-backend nodepool specification"
+      resourceManagement:
+        updateStrategy: "in_place"
+      template: |
+        apiVersion: hypershift.openshift.io/v1beta1
+        kind: NodePool
+        metadata:
+          name: {{`{{ .nodepool.name }}`}}
+          namespace: clusters-{{`{{ .nodepool.cluster_id }}`}}
+        spec:
+          arch: {{`{{ .nodepool.spec.arch | default "amd64" }}`}}
+          clusterName: {{`{{ .cluster.name }}`}}
+          replicas: {{`{{ .nodepool.spec.replicas | default 2 }}`}}
+          management:
+            autoRepair: {{`{{ .nodepool.spec.management.autoRepair | default true }}`}}
+            upgradeType: {{`{{ .nodepool.spec.management.upgradeType | default "Replace" }}`}}
+            {{`{{- if .nodepool.spec.management.replace }}`}}
+            replace:
+              {{`{{- if .nodepool.spec.management.replace.strategy }}`}}
+              strategy: {{`{{ .nodepool.spec.management.replace.strategy }}`}}
+              {{`{{- end }}`}}
+              {{`{{- if .nodepool.spec.management.replace.rollingUpdate }}`}}
+              rollingUpdate:
+                maxSurge: {{`{{ .nodepool.spec.management.replace.rollingUpdate.maxSurge | default 1 }}`}}
+                maxUnavailable: {{`{{ .nodepool.spec.management.replace.rollingUpdate.maxUnavailable | default 0 }}`}}
+              {{`{{- end }}`}}
+            {{`{{- end }}`}}
+          release:
+            image: {{`{{ .nodepool.spec.release.image | default "quay.io/openshift-release-dev/ocp-release:4.20.0-x86_64" }}`}}
+          platform:
+            type: {{`{{ .nodepool.spec.platform.type }}`}}
+            {{`{{- if eq .nodepool.spec.platform.type "GCP" }}`}}
+            gcp:
+              machineType: {{`{{ .nodepool.spec.platform.gcp.instanceType | default "n2-standard-4" }}`}}
+              zone: {{`{{ .nodepool.spec.platform.gcp.zone | default "us-central1-a" }}`}}
+              image: {{`{{ .nodepool.spec.platform.gcp.image | default "projects/redhat-marketplace-dev/global/images/redhat-coreos-osd-418-x86-64-202508060022" }}`}}
+              {{`{{- if .nodepool.spec.platform.gcp.provisioningModel }}`}}
+              provisioningModel: {{`{{ .nodepool.spec.platform.gcp.provisioningModel }}`}}
+              {{`{{- end }}`}}
+            {{`{{- end }}`}}
+
+  statusConditions:
+    - name: "Applied"
+      status: >-
+        {{`{{- if .resources.nodepool -}}`}}True{{`{{- else -}}`}}False{{`{{- end }}`}}
+      reason: >-
+        {{`{{- if .resources.nodepool -}}`}}ResourceCreated{{`{{- else -}}`}}ResourceNotCreated{{`{{- end }}`}}
+      message: >-
+        {{`{{- if .resources.nodepool -}}`}}
+        NodePool {{`{{ .nodepool.name }}`}} created successfully
+        {{`{{- else -}}`}}
+        Waiting for NodePool resource to be created
+        {{`{{- end }}`}}
+
+    - name: "Available"
+      status: >-
+        {{`{{- if .resources.nodepool -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.nodepool.status.conditions -}}`}}
+            {{`{{- if eq .type "AllMachinesReady" -}}{{ .status }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}Unknown{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          Unknown
+        {{`{{- end }}`}}
+      reason: >-
+        {{`{{- if .resources.nodepool -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.nodepool.status.conditions -}}`}}
+            {{`{{- if eq .type "AllMachinesReady" -}}{{ .reason }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}ConditionNotFound{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          ResourceNotFound
+        {{`{{- end }}`}}
+      message: >-
+        {{`{{- if .resources.nodepool -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.nodepool.status.conditions -}}`}}
+            {{`{{- if eq .type "AllMachinesReady" -}}{{ .message }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}AllMachinesReady condition not yet reported{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          NodePool resource not found
+        {{`{{- end }}`}}
+
+    - name: "Ready"
+      status: >-
+        {{`{{- if .resources.nodepool -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.nodepool.status.conditions -}}`}}
+            {{`{{- if eq .type "Ready" -}}{{ .status }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}Unknown{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          Unknown
+        {{`{{- end }}`}}
+      reason: >-
+        {{`{{- if .resources.nodepool -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.nodepool.status.conditions -}}`}}
+            {{`{{- if eq .type "Ready" -}}{{ .reason }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}ConditionNotFound{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          ResourceNotFound
+        {{`{{- end }}`}}
+      message: >-
+        {{`{{- if .resources.nodepool -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.nodepool.status.conditions -}}`}}
+            {{`{{- if eq .type "Ready" -}}{{ .message }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}Ready condition not yet reported by NodePool{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          NodePool resource not found or not created yet
+        {{`{{- end }}`}}
+
+    - name: "Healthy"
+      status: >-
+        {{`{{- if .resources.nodepool -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.nodepool.status.conditions -}}`}}
+            {{`{{- if eq .type "AllNodesHealthy" -}}{{ .status }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}Unknown{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          Unknown
+        {{`{{- end }}`}}
+      reason: >-
+        {{`{{- if .resources.nodepool -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.nodepool.status.conditions -}}`}}
+            {{`{{- if eq .type "AllNodesHealthy" -}}{{ .reason }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}ConditionNotFound{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          ResourceNotFound
+        {{`{{- end }}`}}
+      message: >-
+        {{`{{- if .resources.nodepool -}}`}}
+          {{`{{- $found := false -}}`}}
+          {{`{{- range .resources.nodepool.status.conditions -}}`}}
+            {{`{{- if eq .type "AllNodesHealthy" -}}{{ .message }}{{- $found = true -}}{{- end -}}`}}
+          {{`{{- end -}}`}}
+          {{`{{- if not $found -}}`}}AllNodesHealthy condition not yet reported{{`{{- end -}}`}}
+        {{`{{- else -}}`}}
+          NodePool resource not found
+        {{`{{- end }}`}}

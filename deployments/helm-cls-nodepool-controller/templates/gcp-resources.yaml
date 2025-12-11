@@ -1,0 +1,47 @@
+# Config Connector resources for cls-nodepool-controller
+#
+# TODO: This is a temporary configuration for testing. Currently sharing the
+# cls-hypershift-client service account to reuse its remote cluster RBAC permissions.
+# For production, the nodepool controller should have its own service account with
+# proper RBAC configured on the management cluster.
+#
+# Note: IAM Service Account and Workload Identity are managed by cls-hypershift-client chart
+# This chart only creates the Pub/Sub subscription and grants the existing service account access
+
+---
+# Pub/Sub Subscription for nodepool events
+apiVersion: pubsub.cnrm.cloud.google.com/v1beta1
+kind: PubSubSubscription
+metadata:
+  name: {{ .Values.pubsub.subscription }}
+  namespace: {{ .Values.controller.namespace }}
+  annotations:
+    cnrm.cloud.google.com/project-id: {{ .Values.gcp.projectId | quote }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.controller.name }}
+    app.kubernetes.io/component: pubsub-subscription
+spec:
+  resourceID: {{ .Values.pubsub.subscription }}
+  topicRef:
+    external: "projects/{{ .Values.gcp.projectId }}/topics/{{ .Values.pubsub.topic }}"
+  ackDeadlineSeconds: 60
+  messageRetentionDuration: "604800s"  # 7 days
+  enableMessageOrdering: false
+
+---
+# Pub/Sub IAM Policy Member - grant existing service account access to this subscription
+apiVersion: iam.cnrm.cloud.google.com/v1beta1
+kind: IAMPolicyMember
+metadata:
+  name: {{ .Values.controller.name }}-pubsub-subscriber
+  namespace: {{ .Values.controller.namespace }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.controller.name }}
+    app.kubernetes.io/component: iam-policy
+spec:
+  resourceRef:
+    apiVersion: pubsub.cnrm.cloud.google.com/v1beta1
+    kind: PubSubSubscription
+    name: {{ .Values.pubsub.subscription }}
+  role: "roles/pubsub.subscriber"
+  member: "serviceAccount:{{ .Values.serviceAccount.gcp }}@{{ .Values.gcp.projectId }}.iam.gserviceaccount.com"

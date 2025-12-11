@@ -1,0 +1,62 @@
+# RBAC resources for cls-nodepool-controller
+#
+# TODO: This is a temporary configuration for testing. Currently sharing the
+# cls-hypershift-client service account to reuse its remote cluster RBAC permissions.
+# For production, the nodepool controller should have its own service account with
+# proper RBAC configured on the management cluster.
+#
+# ServiceAccount is shared with cls-hypershift-client, no need to create it here
+# The deployment uses serviceAccount.kubernetes from values.yaml
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRole
+metadata:
+  name: {{ .Values.controller.name }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.controller.name }}
+rules:
+- apiGroups:
+  - cls.redhat.com
+  resources:
+  - controllerconfigs
+  verbs:
+  - get
+  - list
+  - watch
+  - update
+  - patch
+- apiGroups:
+  - cls.redhat.com
+  resources:
+  - controllerconfigs/status
+  verbs:
+  - get
+  - update
+  - patch
+- apiGroups:
+    - ""
+  resources:
+    - secrets
+  verbs:
+    - get
+    - list
+    - watch
+    - update
+    - patch
+
+---
+apiVersion: rbac.authorization.k8s.io/v1
+kind: ClusterRoleBinding
+metadata:
+  name: {{ .Values.controller.name }}
+  labels:
+    app.kubernetes.io/name: {{ .Values.controller.name }}
+roleRef:
+  apiGroup: rbac.authorization.k8s.io
+  kind: ClusterRole
+  name: {{ .Values.controller.name }}
+subjects:
+- kind: ServiceAccount
+  name: {{ .Values.serviceAccount.kubernetes }}
+  namespace: {{ .Values.controller.namespace }}
