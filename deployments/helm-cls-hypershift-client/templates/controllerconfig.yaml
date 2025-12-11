@@ -269,7 +269,7 @@ spec:
                   MAX_ATTEMPTS=150
 
                   while [ $ATTEMPTS -lt $MAX_ATTEMPTS ]; do
-                    if kubectl --kubeconfig=/kubeconfig/value get --raw /healthz &>/dev/null; then
+                    if kubectl --kubeconfig=/kubeconfig/kubeconfig get --raw /healthz &>/dev/null; then
                       echo "API server is ready after $((ATTEMPTS * 10)) seconds"
                       break
                     fi
@@ -284,7 +284,7 @@ spec:
                   fi
 
                   echo "Creating ClusterRoleBinding for redhat.com domain..."
-                  kubectl --kubeconfig=/kubeconfig/value apply -f - <<EOF
+                  kubectl --kubeconfig=/kubeconfig/kubeconfig apply -f - <<EOF
                   apiVersion: rbac.authorization.k8s.io/v1
                   kind: ClusterRoleBinding
                   metadata:
@@ -305,7 +305,7 @@ spec:
                   echo "ClusterRoleBinding created successfully"
 
                   echo "Verifying ClusterRoleBinding..."
-                  kubectl --kubeconfig=/kubeconfig/value get clusterrolebinding redhat-domain-admins -o yaml
+                  kubectl --kubeconfig=/kubeconfig/kubeconfig get clusterrolebinding redhat-domain-admins -o yaml
                 volumeMounts:
                 - name: kubeconfig
                   mountPath: /kubeconfig
