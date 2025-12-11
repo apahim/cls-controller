@@ -9,6 +9,7 @@ import (
 	"github.com/apahim/cls-controller/internal/sdk"
 	"github.com/stretchr/testify/assert"
 	"go.uber.org/zap"
+	"k8s.io/apimachinery/pkg/apis/meta/v1/unstructured"
 )
 
 // MockSDKClient implements a mock SDK client for testing
@@ -322,4 +323,175 @@ func TestController_New(t *testing.T) {
 	assert.Equal(t, "test-project", config.ProjectID)
 	assert.Equal(t, "test-controller", config.ControllerName)
 	_ = logger // logger would be used in actual controller creation
+}
+
+func TestNeedsUpdateNodePool(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	controller := &Controller{logger: logger}
+
+	tests := []struct {
+		name           string
+		existingSpec   map[string]interface{}
+		desiredSpec    map[string]interface{}
+		existingLabels map[string]string
+		desiredLabels  map[string]string
+		expectUpdate   bool
+	}{
+		{
+			name: "no update needed - specs match",
+			existingSpec: map[string]interface{}{
+				"replicas": int64(2),
+				"platform": map[string]interface{}{
+					"type": "GCP",
+					"gcp": map[string]interface{}{
+						"machineType": "n1-standard-4",
+					},
+				},
+			},
+			desiredSpec: map[string]interface{}{
+				"replicas": int64(2),
+				"platform": map[string]interface{}{
+					"type": "GCP",
+					"gcp": map[string]interface{}{
+						"machineType": "n1-standard-4",
+					},
+				},
+			},
+			expectUpdate: false,
+		},
+		{
+			name: "no update needed - existing has extra fields",
+			existingSpec: map[string]interface{}{
+				"replicas": int64(2),
+				"platform": map[string]interface{}{
+					"type": "GCP",
+					"gcp": map[string]interface{}{
+						"machineType":       "n1-standard-4",
+						"provisioningModel": "Standard", // extra field
+					},
+				},
+				"management": map[string]interface{}{
+					"autoRepair":  true,
+					"upgradeType": "Replace",
+					"replace": map[string]interface{}{ // extra block
+						"strategy": "RollingUpdate",
+					},
+				},
+			},
+			desiredSpec: map[string]interface{}{
+				"replicas": int64(2),
+				"platform": map[string]interface{}{
+					"type": "GCP",
+					"gcp": map[string]interface{}{
+						"machineType": "n1-standard-4",
+						// no provisioningModel in desired
+					},
+				},
+				"management": map[string]interface{}{
+					"autoRepair":  true,
+					"upgradeType": "Replace",
+					// no replace block in desired
+				},
+			},
+			expectUpdate: false,
+		},
+		{
+			name: "update needed - value differs",
+			existingSpec: map[string]interface{}{
+				"replicas": int64(2),
+			},
+			desiredSpec: map[string]interface{}{
+				"replicas": int64(3),
+			},
+			expectUpdate: true,
+		},
+		{
+			name: "update needed - nested value differs",
+			existingSpec: map[string]interface{}{
+				"platform": map[string]interface{}{
+					"gcp": map[string]interface{}{
+						"machineType": "n1-standard-4",
+					},
+				},
+			},
+			desiredSpec: map[string]interface{}{
+				"platform": map[string]interface{}{
+					"gcp": map[string]interface{}{
+						"machineType": "n2-standard-4",
+					},
+				},
+			},
+			expectUpdate: true,
+		},
+		{
+			name: "update needed - desired field missing from existing",
+			existingSpec: map[string]interface{}{
+				"replicas": int64(2),
+			},
+			desiredSpec: map[string]interface{}{
+				"replicas": int64(2),
+				"arch":     "amd64", // missing from existing
+			},
+			expectUpdate: true,
+		},
+		{
+			name: "no update - numeric type difference (int64 vs float64)",
+			existingSpec: map[string]interface{}{
+				"replicas": float64(2), // JSON unmarshaling produces float64
+			},
+			desiredSpec: map[string]interface{}{
+				"replicas": int64(2), // Template may produce int64
+			},
+			expectUpdate: false,
+		},
+		{
+			name: "update needed - label missing",
+			existingSpec: map[string]interface{}{
+				"replicas": int64(2),
+			},
+			desiredSpec: map[string]interface{}{
+				"replicas": int64(2),
+			},
+			existingLabels: map[string]string{"app": "test"},
+			desiredLabels:  map[string]string{"app": "test", "new-label": "value"},
+			expectUpdate:   true,
+		},
+		{
+			name: "no update - existing has extra labels",
+			existingSpec: map[string]interface{}{
+				"replicas": int64(2),
+			},
+			desiredSpec: map[string]interface{}{
+				"replicas": int64(2),
+			},
+			existingLabels: map[string]string{"app": "test", "extra": "label"},
+			desiredLabels:  map[string]string{"app": "test"},
+			expectUpdate:   false,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			existing := &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": tt.existingSpec,
+				},
+			}
+			if tt.existingLabels != nil {
+				existing.SetLabels(tt.existingLabels)
+			}
+
+			desired := &unstructured.Unstructured{
+				Object: map[string]interface{}{
+					"spec": tt.desiredSpec,
+				},
+			}
+			if tt.desiredLabels != nil {
+				desired.SetLabels(tt.desiredLabels)
+			}
+
+			result := controller.needsUpdateNodePool(existing, desired)
+			assert.Equal(t, tt.expectUpdate, result, "needsUpdateNodePool result mismatch")
+		})
+	}
 }

@@ -453,6 +453,7 @@ func (c *Controller) getOrCreateVersionedResource(ctx context.Context, resourceC
 }
 
 // needsUpdate compares two resources to determine if update is needed
+// Uses full spec comparison - any difference triggers an update
 func (c *Controller) needsUpdate(existing, desired *unstructured.Unstructured) bool {
 	// Simple comparison - compare specs
 	existingSpec, existingHasSpec, _ := unstructured.NestedMap(existing.Object, "spec")
@@ -476,6 +477,126 @@ func (c *Controller) needsUpdate(existing, desired *unstructured.Unstructured) b
 	}
 
 	return false
+}
+
+// needsUpdateNodePool compares two resources for nodepool updates
+// Only compares fields that are present in the desired spec - extra fields in existing are ignored
+// This prevents unnecessary updates when existing NodePool has fields set by HyperShift
+func (c *Controller) needsUpdateNodePool(existing, desired *unstructured.Unstructured) bool {
+	existingSpec, existingHasSpec, _ := unstructured.NestedMap(existing.Object, "spec")
+	desiredSpec, desiredHasSpec, _ := unstructured.NestedMap(desired.Object, "spec")
+
+	if existingHasSpec != desiredHasSpec {
+		return true
+	}
+
+	// Only compare fields that are in the desired spec
+	if existingHasSpec && !c.containsDesiredFields(existingSpec, desiredSpec) {
+		return true
+	}
+
+	// Compare labels - only check if desired labels are present in existing
+	if !c.containsDesiredLabels(existing.GetLabels(), desired.GetLabels()) {
+		return true
+	}
+
+	// Compare annotations - only check if desired annotations are present in existing
+	if !c.containsDesiredLabels(existing.GetAnnotations(), desired.GetAnnotations()) {
+		return true
+	}
+
+	return false
+}
+
+// containsDesiredFields checks if existing contains all fields from desired with matching values
+// Extra fields in existing are ignored - we only care that desired fields are present and match
+func (c *Controller) containsDesiredFields(existing, desired map[string]interface{}) bool {
+	for key, desiredValue := range desired {
+		existingValue, exists := existing[key]
+		if !exists {
+			// Desired field is missing from existing
+			return false
+		}
+
+		// Handle nested maps recursively
+		desiredMap, desiredIsMap := desiredValue.(map[string]interface{})
+		existingMap, existingIsMap := existingValue.(map[string]interface{})
+
+		if desiredIsMap && existingIsMap {
+			if !c.containsDesiredFields(existingMap, desiredMap) {
+				return false
+			}
+		} else if desiredIsMap != existingIsMap {
+			// Type mismatch - one is map, other is not
+			return false
+		} else {
+			// Compare values directly, handling numeric type differences
+			if !c.valuesEqual(existingValue, desiredValue) {
+				return false
+			}
+		}
+	}
+	return true
+}
+
+// valuesEqual compares two values, handling numeric type differences
+// JSON unmarshaling can produce float64 for numbers, while templates may produce int
+func (c *Controller) valuesEqual(existing, desired interface{}) bool {
+	// Handle numeric type differences
+	existingNum, existingIsNum := toFloat64(existing)
+	desiredNum, desiredIsNum := toFloat64(desired)
+
+	if existingIsNum && desiredIsNum {
+		return existingNum == desiredNum
+	}
+
+	// Handle slice comparison
+	existingSlice, existingIsSlice := existing.([]interface{})
+	desiredSlice, desiredIsSlice := desired.([]interface{})
+
+	if existingIsSlice && desiredIsSlice {
+		if len(existingSlice) != len(desiredSlice) {
+			return false
+		}
+		for i := range desiredSlice {
+			if !c.valuesEqual(existingSlice[i], desiredSlice[i]) {
+				return false
+			}
+		}
+		return true
+	}
+
+	// Fall back to reflect.DeepEqual for other types
+	return reflect.DeepEqual(existing, desired)
+}
+
+// toFloat64 attempts to convert a value to float64
+func toFloat64(v interface{}) (float64, bool) {
+	switch n := v.(type) {
+	case float64:
+		return n, true
+	case float32:
+		return float64(n), true
+	case int:
+		return float64(n), true
+	case int64:
+		return float64(n), true
+	case int32:
+		return float64(n), true
+	default:
+		return 0, false
+	}
+}
+
+// containsDesiredLabels checks if existing labels contain all desired labels with matching values
+func (c *Controller) containsDesiredLabels(existing, desired map[string]string) bool {
+	for key, desiredValue := range desired {
+		existingValue, exists := existing[key]
+		if !exists || existingValue != desiredValue {
+			return false
+		}
+	}
+	return true
 }
 
 // evaluateAndReportStatus evaluates resource status and reports to cls-backend
@@ -1353,7 +1474,8 @@ func (c *Controller) getOrUpdateInPlaceNodePoolResource(ctx context.Context, res
 	}
 
 	// Resource exists - update it if needed
-	if c.needsUpdate(existing, resource) {
+	// Use nodepool-specific comparison that only checks desired fields
+	if c.needsUpdateNodePool(existing, resource) {
 		// Preserve resource version for update
 		resource.SetResourceVersion(existing.GetResourceVersion())
 		if err := resourceClient.Update(ctx, resource); err != nil {
