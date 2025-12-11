@@ -379,7 +379,7 @@ func TestRenderNodePoolStatusCondition(t *testing.T) {
 	assert.Equal(t, "NodePool test-pool created", message)
 
 	// Test Ready condition
-	status, reason, message, err = engine.RenderNodePoolStatusCondition("Ready", nodepool, cluster, resources)
+	status, reason, _, err = engine.RenderNodePoolStatusCondition("Ready", nodepool, cluster, resources)
 	require.NoError(t, err)
 	assert.Equal(t, "True", status)
 	assert.Equal(t, "ConditionFound", reason)

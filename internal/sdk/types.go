@@ -161,16 +161,16 @@ type Config struct {
 
 // Event types that controllers can receive
 const (
-	EventTypeClusterCreated   = "cluster.created"
-	EventTypeClusterUpdated   = "cluster.updated"
-	EventTypeClusterDeleted   = "cluster.deleted"
-	EventTypeClusterReconcile = "cluster.reconcile"
+	EventTypeClusterCreated    = "cluster.created"
+	EventTypeClusterUpdated    = "cluster.updated"
+	EventTypeClusterDeleted    = "cluster.deleted"
+	EventTypeClusterReconcile  = "cluster.reconcile"
 	EventTypeNodePoolCreated   = "nodepool.created"
 	EventTypeNodePoolUpdated   = "nodepool.updated"
 	EventTypeNodePoolDeleted   = "nodepool.deleted"
 	EventTypeNodePoolReconcile = "nodepool.reconcile"
 	EventTypeControllerStart   = "controller.start"
-	EventTypeControllerStop   = "controller.stop"
+	EventTypeControllerStop    = "controller.stop"
 )
 
 // Status values
