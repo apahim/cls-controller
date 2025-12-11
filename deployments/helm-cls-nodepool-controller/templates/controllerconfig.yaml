@@ -78,19 +78,19 @@ spec:
     - name: "Available"
       status: >-
         {{`{{- if .resources.nodepool -}}`}}
-          {{`{{- if and .resources.nodepool.status.replicas (gt .resources.nodepool.status.replicas 0.0) -}}`}}True{{`{{- else -}}`}}False{{`{{- end -}}`}}
+          {{`{{- if gt (int .resources.nodepool.status.replicas) 0 -}}`}}True{{`{{- else -}}`}}False{{`{{- end -}}`}}
         {{`{{- else -}}`}}
           Unknown
         {{`{{- end }}`}}
       reason: >-
         {{`{{- if .resources.nodepool -}}`}}
-          {{`{{- if and .resources.nodepool.status.replicas (gt .resources.nodepool.status.replicas 0.0) -}}`}}ReplicasAvailable{{`{{- else -}}`}}NoReplicas{{`{{- end -}}`}}
+          {{`{{- if gt (int .resources.nodepool.status.replicas) 0 -}}`}}ReplicasAvailable{{`{{- else -}}`}}NoReplicas{{`{{- end -}}`}}
         {{`{{- else -}}`}}
           ResourceNotFound
         {{`{{- end }}`}}
       message: >-
         {{`{{- if .resources.nodepool -}}`}}
-          {{`{{- if and .resources.nodepool.status.replicas (gt .resources.nodepool.status.replicas 0.0) -}}`}}NodePool has {{`{{ .resources.nodepool.status.replicas }}`}} replicas{{`{{- else -}}`}}NodePool has no replicas yet{{`{{- end -}}`}}
+          {{`{{- if gt (int .resources.nodepool.status.replicas) 0 -}}`}}NodePool has {{`{{ .resources.nodepool.status.replicas }}`}} replicas{{`{{- else -}}`}}NodePool has no replicas yet{{`{{- end -}}`}}
         {{`{{- else -}}`}}
           NodePool resource not found
         {{`{{- end }}`}}

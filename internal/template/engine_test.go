@@ -453,3 +453,91 @@ func TestBuildClusterContext(t *testing.T) {
 	require.True(t, ok, "platform should be a map")
 	assert.Equal(t, "GCP", platform["type"])
 }
+
+func TestIntFunctionWithGtComparison(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	engine := NewEngine(time.Second*30, logger)
+
+	// Create a ControllerConfig with status conditions that use int() and gt()
+	config := &crd.ControllerConfig{
+		Spec: crd.ControllerConfigSpec{
+			Name: "test-controller",
+			StatusConditions: []crd.StatusConditionConfig{
+				{
+					Name:    "Available",
+					Status:  `{{- if .resources.nodepool -}}{{- if gt (int .resources.nodepool.status.replicas) 0 -}}True{{- else -}}False{{- end -}}{{- else -}}Unknown{{- end -}}`,
+					Reason:  `{{- if .resources.nodepool -}}{{- if gt (int .resources.nodepool.status.replicas) 0 -}}ReplicasAvailable{{- else -}}NoReplicas{{- end -}}{{- else -}}ResourceNotFound{{- end -}}`,
+					Message: `NodePool replicas status`,
+				},
+			},
+		},
+	}
+
+	err := engine.CompileTemplates(config)
+	require.NoError(t, err, "Template with int() function should compile successfully")
+
+	specJSON, _ := json.Marshal(map[string]interface{}{"replicas": 2})
+	nodepool := &sdk.NodePool{
+		ID:         "np-123",
+		ClusterID:  "cluster-456",
+		Name:       "test-pool",
+		Generation: 1,
+		Spec:       specJSON,
+	}
+
+	clusterSpecJSON, _ := json.Marshal(map[string]interface{}{"version": "4.14"})
+	cluster := &sdk.Cluster{
+		ID:         "cluster-456",
+		Name:       "test-cluster",
+		Generation: 1,
+		Spec:       clusterSpecJSON,
+	}
+
+	// Test with replicas > 0 (int64 type like Kubernetes returns)
+	resourcesWithReplicas := map[string]*unstructured.Unstructured{
+		"nodepool": {
+			Object: map[string]interface{}{
+				"apiVersion": "hypershift.openshift.io/v1beta1",
+				"kind":       "NodePool",
+				"metadata": map[string]interface{}{
+					"name": "test-pool",
+				},
+				"status": map[string]interface{}{
+					"replicas": int64(2),
+				},
+			},
+		},
+	}
+
+	status, reason, _, err := engine.RenderNodePoolStatusCondition("Available", nodepool, cluster, resourcesWithReplicas)
+	require.NoError(t, err)
+	assert.Equal(t, "True", status, "Should return True when replicas > 0")
+	assert.Equal(t, "ReplicasAvailable", reason)
+
+	// Test with replicas = 0
+	resourcesZeroReplicas := map[string]*unstructured.Unstructured{
+		"nodepool": {
+			Object: map[string]interface{}{
+				"apiVersion": "hypershift.openshift.io/v1beta1",
+				"kind":       "NodePool",
+				"metadata": map[string]interface{}{
+					"name": "test-pool",
+				},
+				"status": map[string]interface{}{
+					"replicas": int64(0),
+				},
+			},
+		},
+	}
+
+	status, reason, _, err = engine.RenderNodePoolStatusCondition("Available", nodepool, cluster, resourcesZeroReplicas)
+	require.NoError(t, err)
+	assert.Equal(t, "False", status, "Should return False when replicas = 0")
+	assert.Equal(t, "NoReplicas", reason)
+
+	// Test without resources
+	status, reason, _, err = engine.RenderNodePoolStatusCondition("Available", nodepool, cluster, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "Unknown", status, "Should return Unknown when no resources")
+	assert.Equal(t, "ResourceNotFound", reason)
+}

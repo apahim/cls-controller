@@ -354,6 +354,9 @@ func (e *Engine) getFunctionMap() template.FuncMap {
 		// Utility functions
 		"default":      defaultValue,
 		"randomString": randomString,
+
+		// Type conversion functions
+		"int": toInt,
 	}
 }
 
@@ -413,4 +416,22 @@ func randomString(length int) string {
 		b[i] = charset[b[i]%byte(len(charset))]
 	}
 	return string(b)
+}
+
+// toInt converts various numeric types to int for use with comparison functions
+func toInt(v interface{}) int {
+	switch n := v.(type) {
+	case int:
+		return n
+	case int64:
+		return int(n)
+	case int32:
+		return int(n)
+	case float64:
+		return int(n)
+	case float32:
+		return int(n)
+	default:
+		return 0
+	}
 }
