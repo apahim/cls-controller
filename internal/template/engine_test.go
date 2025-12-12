@@ -541,3 +541,108 @@ func TestIntFunctionWithGtComparison(t *testing.T) {
 	assert.Equal(t, "Unknown", status, "Should return Unknown when no resources")
 	assert.Equal(t, "ResourceNotFound", reason)
 }
+
+func TestReadyConditionWithEmptyMessage(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	engine := NewEngine(time.Second*30, logger)
+
+	// Create a ControllerConfig with Ready condition that uses default for empty message
+	// This matches the actual template in controllerconfig.yaml
+	config := &crd.ControllerConfig{
+		Spec: crd.ControllerConfigSpec{
+			Name: "test-controller",
+			StatusConditions: []crd.StatusConditionConfig{
+				{
+					Name:    "Ready",
+					Status:  `{{- if .resources.nodepool -}}{{- range .resources.nodepool.status.conditions -}}{{- if eq .type "Ready" -}}{{ .status }}{{- end -}}{{- end -}}{{- else -}}Unknown{{- end }}`,
+					Reason:  `{{- if .resources.nodepool -}}{{- range .resources.nodepool.status.conditions -}}{{- if eq .type "Ready" -}}{{ .reason }}{{- end -}}{{- end -}}{{- else -}}ResourceNotFound{{- end }}`,
+					Message: `{{- if .resources.nodepool -}}{{- range .resources.nodepool.status.conditions -}}{{- if eq .type "Ready" -}}{{ .message | default "NodePool is ready" }}{{- end -}}{{- end -}}{{- else -}}NodePool resource not found{{- end }}`,
+				},
+			},
+		},
+	}
+
+	err := engine.CompileTemplates(config)
+	require.NoError(t, err)
+
+	specJSON, _ := json.Marshal(map[string]interface{}{"replicas": 2})
+	nodepool := &sdk.NodePool{
+		ID:         "np-123",
+		ClusterID:  "cluster-456",
+		Name:       "test-pool",
+		Generation: 1,
+		Spec:       specJSON,
+	}
+
+	clusterSpecJSON, _ := json.Marshal(map[string]interface{}{"version": "4.14"})
+	cluster := &sdk.Cluster{
+		ID:         "cluster-456",
+		Name:       "test-cluster",
+		Generation: 1,
+		Spec:       clusterSpecJSON,
+	}
+
+	// Test with Ready condition having empty message (as HyperShift does when ready)
+	resourcesEmptyMessage := map[string]*unstructured.Unstructured{
+		"nodepool": {
+			Object: map[string]interface{}{
+				"apiVersion": "hypershift.openshift.io/v1beta1",
+				"kind":       "NodePool",
+				"metadata": map[string]interface{}{
+					"name": "test-pool",
+				},
+				"status": map[string]interface{}{
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"type":    "Ready",
+							"status":  "True",
+							"reason":  "AsExpected",
+							"message": "", // Empty message - HyperShift behavior when ready
+						},
+					},
+				},
+			},
+		},
+	}
+
+	status, reason, message, err := engine.RenderNodePoolStatusCondition("Ready", nodepool, cluster, resourcesEmptyMessage)
+	require.NoError(t, err)
+	assert.Equal(t, "True", status)
+	assert.Equal(t, "AsExpected", reason)
+	assert.Equal(t, "NodePool is ready", message, "Should use default message when condition message is empty")
+
+	// Test with Ready condition having actual message
+	resourcesWithMessage := map[string]*unstructured.Unstructured{
+		"nodepool": {
+			Object: map[string]interface{}{
+				"apiVersion": "hypershift.openshift.io/v1beta1",
+				"kind":       "NodePool",
+				"metadata": map[string]interface{}{
+					"name": "test-pool",
+				},
+				"status": map[string]interface{}{
+					"conditions": []interface{}{
+						map[string]interface{}{
+							"type":    "Ready",
+							"status":  "False",
+							"reason":  "WaitingForNodes",
+							"message": "Waiting for 2 nodes to become ready",
+						},
+					},
+				},
+			},
+		},
+	}
+
+	status, reason, message, err = engine.RenderNodePoolStatusCondition("Ready", nodepool, cluster, resourcesWithMessage)
+	require.NoError(t, err)
+	assert.Equal(t, "False", status)
+	assert.Equal(t, "WaitingForNodes", reason)
+	assert.Equal(t, "Waiting for 2 nodes to become ready", message, "Should use actual message when present")
+
+	// Test without resources
+	status, _, message, err = engine.RenderNodePoolStatusCondition("Ready", nodepool, cluster, nil)
+	require.NoError(t, err)
+	assert.Equal(t, "Unknown", status)
+	assert.Equal(t, "NodePool resource not found", message)
+}
