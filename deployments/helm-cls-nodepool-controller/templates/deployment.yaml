@@ -6,7 +6,7 @@ metadata:
   labels:
     app.kubernetes.io/name: {{ .Values.controller.name }}
 spec:
-  replicas: 1
+  replicas: {{ .Values.controller.replicas | default 1 }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ .Values.controller.name }}
