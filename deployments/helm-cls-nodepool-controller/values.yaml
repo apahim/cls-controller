@@ -8,6 +8,7 @@ gcp:
 controller:
   name: "cls-nodepool-controller"
   namespace: "cls-system"
+  replicas: 1
   image:
     repository: "quay.io/apahim/cls-controller"
     tag: "latest"
