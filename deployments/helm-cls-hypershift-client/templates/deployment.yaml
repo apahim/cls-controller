@@ -6,7 +6,9 @@ metadata:
   labels:
     app.kubernetes.io/name: {{ .Values.controller.name }}
 spec:
-  replicas: {{ .Values.controller.replicas }}
+  # TODO: Re-all support to configure
+  # replicas: {{ .Values.controller.replicas }}
+  replicas: 1
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ .Values.controller.name }}
