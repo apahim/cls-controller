@@ -8,6 +8,7 @@ metadata:
   name: {{ .Values.serviceAccount.gcp }}
   namespace: {{ .Values.controller.namespace }}
   annotations:
+    argocd.argoproj.io/sync-wave: "-2"
     cnrm.cloud.google.com/project-id: {{ .Values.gcp.projectId | quote }}
   labels:
     app.kubernetes.io/name: {{ .Values.controller.name }}
@@ -25,6 +26,7 @@ metadata:
   name: {{ .Values.pubsub.subscription }}
   namespace: {{ .Values.controller.namespace }}
   annotations:
+    argocd.argoproj.io/sync-wave: "-2"
     cnrm.cloud.google.com/project-id: {{ .Values.gcp.projectId | quote }}
   labels:
     app.kubernetes.io/name: {{ .Values.controller.name }}
@@ -44,6 +46,8 @@ kind: IAMPolicyMember
 metadata:
   name: {{ .Values.controller.name }}-pubsub-subscriber
   namespace: {{ .Values.controller.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app.kubernetes.io/name: {{ .Values.controller.name }}
     app.kubernetes.io/component: iam-policy
@@ -64,6 +68,8 @@ kind: IAMPolicyMember
 metadata:
   name: {{ .Values.controller.name }}-pubsub-viewer
   namespace: {{ .Values.controller.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app.kubernetes.io/name: {{ .Values.controller.name }}
     app.kubernetes.io/component: iam-policy
@@ -82,6 +88,8 @@ kind: IAMPolicyMember
 metadata:
   name: {{ .Values.controller.name }}-workload-identity
   namespace: {{ .Values.controller.namespace }}
+  annotations:
+    argocd.argoproj.io/sync-wave: "-2"
   labels:
     app.kubernetes.io/name: {{ .Values.controller.name }}
     app.kubernetes.io/component: iam-policy
