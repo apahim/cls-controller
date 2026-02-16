@@ -136,6 +136,7 @@ spec:
                 serviceAccountsEmails:
                   nodePool: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.nodePoolEmail }}`}}
                   controlPlane: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.controlPlaneEmail }}`}}
+                  cloudController: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.cloudControllerEmail }}`}}
             {{`{{- else }}`}}
             type: None
             {{`{{- end }}`}}
