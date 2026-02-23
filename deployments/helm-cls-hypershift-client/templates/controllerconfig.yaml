@@ -115,7 +115,7 @@ spec:
           release:
             image: quay.io/openshift-release-dev/ocp-release:4.20.0-x86_64
 
-          controllerAvailabilityPolicy: SingleReplica
+          controllerAvailabilityPolicy: {{ .Values.hostedCluster.controllerAvailabilityPolicy }}
 
           platform:
             {{`{{- if eq .cluster.spec.platform.type "GCP" }}`}}
