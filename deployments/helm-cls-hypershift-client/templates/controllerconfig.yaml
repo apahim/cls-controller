@@ -111,6 +111,9 @@ spec:
             {{- if .Values.hypershift.controlPlaneOperatorImage }}
             hypershift.openshift.io/control-plane-operator-image: {{ .Values.hypershift.controlPlaneOperatorImage }}
             {{- end }}
+            {{- range $key, $value := .Values.hostedCluster.resourceRequestOverrides }}
+            resource-request-override.hypershift.openshift.io/{{ $key }}: {{ $value | quote }}
+            {{- end }}
         spec:
           release:
             image: quay.io/openshift-release-dev/ocp-release:4.20.0-x86_64

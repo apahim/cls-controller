@@ -45,7 +45,12 @@ hypershift:
 
 # HostedCluster configuration
 hostedCluster:
-  controllerAvailabilityPolicy: "SingleReplica"
+  controllerAvailabilityPolicy: "HighlyAvailable"
+  # Resource request overrides for hosted control plane pods
+  # Used to meet GKE Autopilot minimum CPU requirements for pods with anti-affinity
+  # Format: deployment.container: resource=value,...
+  resourceRequestOverrides:
+    etcd.etcd: "cpu=500m"
 
 # HostedCluster DNS domains (comma-separated list)
 # The first domain from this list will be used as the base domain for HostedClusters
