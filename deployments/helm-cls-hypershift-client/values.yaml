@@ -51,6 +51,7 @@ hostedCluster:
   # Format: deployment.container: resource=value,...
   resourceRequestOverrides:
     etcd.etcd: "cpu=500m"
+    kube-apiserver.kube-apiserver: "cpu=500m"
 
 # HostedCluster DNS domains (comma-separated list)
 # The first domain from this list will be used as the base domain for HostedClusters
