@@ -52,6 +52,18 @@ hostedCluster:
   resourceRequestOverrides:
     etcd.etcd: "cpu=500m"
     kube-apiserver.kube-apiserver: "cpu=500m"
+    kube-controller-manager.kube-controller-manager: "cpu=500m"
+    kube-scheduler.kube-scheduler: "cpu=500m"
+    openshift-apiserver.openshift-apiserver: "cpu=500m"
+    openshift-oauth-apiserver.openshift-oauth-apiserver: "cpu=500m"
+    oauth-openshift.oauth-openshift: "cpu=500m"
+    konnectivity-agent.konnectivity-agent: "cpu=500m"
+    ignition-server.ignition-server: "cpu=500m"
+    packageserver.packageserver: "cpu=500m"
+    router.router: "cpu=500m"
+    openshift-controller-manager.openshift-controller-manager: "cpu=500m"
+    cluster-policy-controller.cluster-policy-controller: "cpu=500m"
+    ignition-server-proxy.haproxy: "cpu=500m"
 
 # HostedCluster DNS domains (comma-separated list)
 # The first domain from this list will be used as the base domain for HostedClusters
