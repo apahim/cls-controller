@@ -41,7 +41,7 @@ pullSecret:
 # HyperShift configuration
 hypershift:
   # Optional: Override control plane operator image for testing in dev/integration environments
-  controlPlaneOperatorImage: ""
+  controlPlaneOperatorImage: "quay.io/cveiga/hypershift:latest"
 
 # HostedCluster configuration
 hostedCluster:
