@@ -138,6 +138,7 @@ spec:
                   controlPlane: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.controlPlaneEmail }}`}}
                   cloudController: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.cloudControllerEmail }}`}}
                   storage: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.storageEmail }}`}}
+                  imageRegistry: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.imageRegistryEmail }}`}}
             {{`{{- else }}`}}
             type: None
             {{`{{- end }}`}}
