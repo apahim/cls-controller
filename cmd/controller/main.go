@@ -8,6 +8,7 @@ import (
 	"os/signal"
 	"syscall"
 
+	"github.com/apahim/cls-controller/internal/cincinnati"
 	"github.com/apahim/cls-controller/internal/config"
 	"github.com/apahim/cls-controller/internal/controller"
 	"github.com/apahim/cls-controller/internal/sdk"
@@ -101,6 +102,13 @@ func main() {
 
 	// Initialize controller with SDK client
 	clsController.SetSDKClient(sdkClient)
+
+	// Initialize Cincinnati client if configured (for version resolution controllers)
+	if cfg.CincinnatiBaseURL != "" {
+		cincinnatiClient := cincinnati.NewClient(cfg.CincinnatiBaseURL, cfg.APITimeout)
+		clsController.SetCincinnatiClient(cincinnatiClient)
+		logger.Info("Cincinnati client configured", zap.String("base_url", cfg.CincinnatiBaseURL))
+	}
 
 	// Setup controller with manager
 	if err := clsController.SetupWithManager(mgr); err != nil {

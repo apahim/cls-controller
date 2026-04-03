@@ -317,6 +317,17 @@ func (e *Engine) buildClusterContext(cluster *sdk.Cluster) map[string]interface{
 		clusterCtx["spec"] = spec
 	}
 
+	// Expose status for template rendering (e.g., resolved release image from version resolution controller)
+	if cluster.Status != nil {
+		statusBytes, err := json.Marshal(cluster.Status)
+		if err == nil {
+			var status map[string]interface{}
+			if err := json.Unmarshal(statusBytes, &status); err == nil {
+				clusterCtx["status"] = status
+			}
+		}
+	}
+
 	return clusterCtx
 }
 

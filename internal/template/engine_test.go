@@ -454,6 +454,125 @@ func TestBuildClusterContext(t *testing.T) {
 	assert.Equal(t, "GCP", platform["type"])
 }
 
+func TestBuildClusterContextWithStatus(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	engine := NewEngine(time.Second*30, logger)
+
+	specJSON, _ := json.Marshal(map[string]interface{}{"version": "4.22"})
+
+	cluster := &sdk.Cluster{
+		ID:         "cluster-123",
+		Name:       "my-cluster",
+		Generation: 5,
+		Spec:       specJSON,
+		Status: &sdk.ClusterStatusInfo{
+			ControllerStatuses: map[string]sdk.ControllerStatusInfo{
+				"cls-version-resolution-controller": {
+					Metadata: map[string]interface{}{
+						"release_image":   "quay.io/openshift-release-dev/ocp-release@sha256:abc123",
+						"release_version": "4.22.0-ec.4",
+					},
+				},
+			},
+		},
+		CreatedBy: "user@example.com",
+	}
+
+	ctx := engine.buildClusterContext(cluster)
+
+	// Verify status was parsed
+	parsedStatus, ok := ctx["status"].(map[string]interface{})
+	require.True(t, ok, "status should be a map")
+
+	controllerStatuses, ok := parsedStatus["controller_statuses"].(map[string]interface{})
+	require.True(t, ok, "controller_statuses should be a map")
+
+	vrc, ok := controllerStatuses["cls-version-resolution-controller"].(map[string]interface{})
+	require.True(t, ok, "version resolution controller status should be a map")
+
+	metadata, ok := vrc["metadata"].(map[string]interface{})
+	require.True(t, ok, "metadata should be a map")
+	assert.Equal(t, "quay.io/openshift-release-dev/ocp-release@sha256:abc123", metadata["release_image"])
+}
+
+func TestBuildClusterContextWithoutStatus(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	engine := NewEngine(time.Second*30, logger)
+
+	specJSON, _ := json.Marshal(map[string]interface{}{"version": "4.22"})
+
+	cluster := &sdk.Cluster{
+		ID:         "cluster-123",
+		Name:       "my-cluster",
+		Generation: 1,
+		Spec:       specJSON,
+	}
+
+	ctx := engine.buildClusterContext(cluster)
+
+	// Status should not be present when nil
+	_, ok := ctx["status"]
+	assert.False(t, ok, "status should not be present when cluster has no status")
+}
+
+func TestRenderClusterResourceWithStatus(t *testing.T) {
+	logger, _ := zap.NewDevelopment()
+	engine := NewEngine(time.Second*30, logger)
+
+	config := &crd.ControllerConfig{
+		Spec: crd.ControllerConfigSpec{
+			Name: "test-controller",
+			Resources: []crd.ResourceConfig{
+				{
+					Name: "hostedcluster",
+					Template: `apiVersion: hypershift.openshift.io/v1beta1
+kind: HostedCluster
+metadata:
+  name: {{ .cluster.name }}
+spec:
+  release:
+    image: {{ (index .cluster.status.controller_statuses "cls-version-resolution-controller").metadata.release_image }}`,
+				},
+			},
+		},
+	}
+
+	err := engine.CompileTemplates(config)
+	require.NoError(t, err)
+
+	specJSON, _ := json.Marshal(map[string]interface{}{"version": "4.22"})
+
+	cluster := &sdk.Cluster{
+		ID:         "cluster-123",
+		Name:       "test-cluster",
+		Generation: 1,
+		Spec:       specJSON,
+		Status: &sdk.ClusterStatusInfo{
+			ControllerStatuses: map[string]sdk.ControllerStatusInfo{
+				"cls-version-resolution-controller": {
+					Metadata: map[string]interface{}{
+						"release_image": "quay.io/openshift-release-dev/ocp-release@sha256:abc123",
+					},
+				},
+			},
+		},
+		CreatedBy: "user@example.com",
+	}
+
+	rendered, err := engine.RenderResource("hostedcluster", cluster, nil)
+	require.NoError(t, err)
+	require.NotNil(t, rendered)
+
+	assert.Equal(t, "HostedCluster", rendered.GetKind())
+	assert.Equal(t, "test-cluster", rendered.GetName())
+
+	// Verify release image was rendered from status
+	image, found, err := unstructured.NestedString(rendered.Object, "spec", "release", "image")
+	require.NoError(t, err)
+	require.True(t, found)
+	assert.Equal(t, "quay.io/openshift-release-dev/ocp-release@sha256:abc123", image)
+}
+
 func TestIntFunctionWithGtComparison(t *testing.T) {
 	logger, _ := zap.NewDevelopment()
 	engine := NewEngine(time.Second*30, logger)

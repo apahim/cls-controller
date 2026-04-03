@@ -77,27 +77,67 @@ func (c *HTTPAPIClient) GetCluster(ctx context.Context, clusterID string) (*Clus
 		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
 	}
 
-	var clusterResponse struct {
-		*Cluster
-		Status map[string]interface{} `json:"status,omitempty"`
-	}
-
 	body, err := io.ReadAll(resp.Body)
 	if err != nil {
 		return nil, fmt.Errorf("failed to read response body: %w", err)
 	}
 
-	if err := json.Unmarshal(body, &clusterResponse); err != nil {
+	var cluster Cluster
+	if err := json.Unmarshal(body, &cluster); err != nil {
 		return nil, fmt.Errorf("failed to unmarshal cluster response: %w", err)
 	}
 
 	c.logger.Debug("Successfully fetched cluster from API",
 		zap.String("cluster_id", clusterID),
-		zap.String("cluster_name", clusterResponse.Name),
-		zap.Int64("generation", clusterResponse.Generation),
+		zap.String("cluster_name", cluster.Name),
+		zap.Int64("generation", cluster.Generation),
 	)
 
-	return clusterResponse.Cluster, nil
+	return &cluster, nil
+}
+
+// GetClusterStatus fetches cluster status including individual controller statuses
+func (c *HTTPAPIClient) GetClusterStatus(ctx context.Context, clusterID string) (*ClusterStatusResponse, error) {
+	url := fmt.Sprintf("%s/clusters/%s/status", c.baseURL, clusterID)
+
+	c.logger.Debug("Fetching cluster status from API",
+		zap.String("cluster_id", clusterID),
+		zap.String("url", url),
+	)
+
+	req, err := http.NewRequestWithContext(ctx, "GET", url, nil)
+	if err != nil {
+		return nil, fmt.Errorf("failed to create request: %w", err)
+	}
+
+	c.addAuthHeaders(req)
+
+	resp, err := c.httpClient.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("failed to fetch cluster status: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, fmt.Errorf("cluster %s not found", clusterID)
+	}
+
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return nil, fmt.Errorf("API request failed with status %d: %s", resp.StatusCode, string(body))
+	}
+
+	var statusResponse ClusterStatusResponse
+	if err := json.NewDecoder(resp.Body).Decode(&statusResponse); err != nil {
+		return nil, fmt.Errorf("failed to unmarshal cluster status response: %w", err)
+	}
+
+	c.logger.Debug("Successfully fetched cluster status from API",
+		zap.String("cluster_id", clusterID),
+		zap.Int("controller_count", len(statusResponse.ControllerStatus)),
+	)
+
+	return &statusResponse, nil
 }
 
 // GetNodePool fetches nodepool spec from the simplified API

@@ -79,12 +79,24 @@ type ControllerEvent struct {
 
 // ClusterStatusInfo represents the Kubernetes-like status block for clusters
 type ClusterStatusInfo struct {
-	ObservedGeneration int64       `json:"observedGeneration"`
-	Conditions         []Condition `json:"conditions"`
-	Phase              string      `json:"phase,omitempty"`   // Current lifecycle phase
-	Message            string      `json:"message,omitempty"` // Human-readable status message
-	Reason             string      `json:"reason,omitempty"`  // Machine-readable reason
-	LastUpdateTime     time.Time   `json:"lastUpdateTime"`
+	ObservedGeneration int64                           `json:"observedGeneration"`
+	Conditions         []Condition                     `json:"conditions"`
+	Phase              string                          `json:"phase,omitempty"`   // Current lifecycle phase
+	Message            string                          `json:"message,omitempty"` // Human-readable status message
+	Reason             string                          `json:"reason,omitempty"`  // Machine-readable reason
+	LastUpdateTime     time.Time                       `json:"lastUpdateTime"`
+	ControllerStatuses map[string]ControllerStatusInfo `json:"controller_statuses,omitempty"`
+}
+
+// ControllerStatusInfo represents the status reported by a single controller
+type ControllerStatusInfo struct {
+	ClusterID          string                 `json:"cluster_id,omitempty"`
+	ControllerName     string                 `json:"controller_name,omitempty"`
+	ObservedGeneration int64                  `json:"observed_generation,omitempty"`
+	Conditions         []Condition            `json:"conditions,omitempty"`
+	Metadata           map[string]interface{} `json:"metadata,omitempty"`
+	LastError          *ErrorInfo             `json:"last_error,omitempty"`
+	LastUpdated        time.Time              `json:"last_updated,omitempty"`
 }
 
 // Cluster represents cluster information
@@ -124,10 +136,20 @@ type StatusReporter interface {
 	ReportStatus(update *StatusUpdate) error
 }
 
+// ClusterStatusResponse represents the response from GET /clusters/:id/status
+type ClusterStatusResponse struct {
+	ClusterID        string                  `json:"cluster_id"`
+	Status           *ClusterStatusInfo      `json:"status,omitempty"`
+	ControllerStatus []*ControllerStatusInfo `json:"controller_status,omitempty"`
+}
+
 // APIClient defines the interface for interacting with the cls-backend API
 type APIClient interface {
 	// GetCluster fetches cluster spec from the API
 	GetCluster(ctx context.Context, clusterID string) (*Cluster, error)
+
+	// GetClusterStatus fetches cluster status including individual controller statuses
+	GetClusterStatus(ctx context.Context, clusterID string) (*ClusterStatusResponse, error)
 
 	// GetNodePool fetches nodepool spec from the API
 	GetNodePool(ctx context.Context, nodepoolID string) (*NodePool, error)
