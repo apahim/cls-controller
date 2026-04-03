@@ -1,0 +1,32 @@
+# Configuration values for cls-version-resolution-controller
+
+# GCP Configuration
+gcp:
+  projectId: "apahim-dev-1"
+
+# Controller Configuration
+controller:
+  name: "cls-version-resolution-controller"
+  namespace: "cls-system"
+  replicas: 1
+  image:
+    repository: "quay.io/apahim/cls-controller"
+    tag: "latest"
+
+  # API Configuration
+  api:
+    baseUrl: "http://cls-backend-apps-cls-backend-application.cls-system.svc.cluster.local:80/api/v1"
+
+# Cincinnati Configuration
+cincinnati:
+  baseUrl: "https://api.openshift.com/api/upgrades_info/v1/graph"
+
+# Pub/Sub Configuration
+pubsub:
+  topic: "cluster-events"
+  subscription: "cluster-events-version-resolution"
+
+# Service Account Names
+serviceAccount:
+  kubernetes: "cls-version-resolution-controller"
+  gcp: "cls-version-resolution-controller"
