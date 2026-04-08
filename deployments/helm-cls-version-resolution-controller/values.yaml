@@ -29,4 +29,4 @@ pubsub:
 # Service Account Names
 serviceAccount:
   kubernetes: "cls-version-resolution-controller"
-  gcp: "cls-version-resolution-controller"
+  gcp: "cls-version-resolution"
