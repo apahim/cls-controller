@@ -2,9 +2,11 @@ package controller
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"time"
 
+	"github.com/apahim/cls-controller/internal/cincinnati"
 	"github.com/apahim/cls-controller/internal/client"
 	"github.com/apahim/cls-controller/internal/config"
 	"github.com/apahim/cls-controller/internal/crd"
@@ -33,6 +35,9 @@ type Controller struct {
 	// Client manager for different target types
 	clientManager *client.Manager
 
+	// Cincinnati client for version resolution (nil if not configured)
+	cincinnatiClient *cincinnati.Client
+
 	// Current controller configuration
 	controllerConfig *crd.ControllerConfig
 }
@@ -58,6 +63,11 @@ func New(cfg *config.Config, k8sClient ctrlclient.Client, logger *zap.Logger) (*
 // SetSDKClient sets the SDK client after controller creation
 func (c *Controller) SetSDKClient(sdkClient *sdk.Client) {
 	c.sdkClient = sdkClient
+}
+
+// SetCincinnatiClient sets the Cincinnati client for version resolution
+func (c *Controller) SetCincinnatiClient(client *cincinnati.Client) {
+	c.cincinnatiClient = client
 }
 
 // SetupWithManager sets up the controller with the manager
@@ -182,10 +192,22 @@ func (c *Controller) HandleClusterEvent(event *sdk.ClusterEvent) error {
 		zap.Int64("cluster_generation", cluster.Generation),
 	)
 
+	// Enrich cluster with controller statuses from the status endpoint
+	// This makes other controllers' metadata (e.g., resolved release image) available
+	// in templates and preconditions via .cluster.status.controller_statuses
+	c.enrichClusterWithControllerStatuses(ctx, apiClient, cluster)
+
 	// Check preconditions
 	if !c.evaluatePreconditions(cluster) {
 		log.Info("Preconditions not met, skipping resource creation")
 		return c.reportPreconditionFailure(event, cluster)
+	}
+
+	// If Cincinnati is configured, this controller handles version resolution.
+	// Currently the only use case for a non-resource controller. If more cases arise,
+	// consider a handler chain in ControllerConfig or separate controller implementations.
+	if c.cincinnatiClient != nil {
+		return c.handleVersionResolution(event, cluster)
 	}
 
 	// Process the event based on type
@@ -358,16 +380,119 @@ func (c *Controller) handleClusterReconcile(event *sdk.ClusterEvent, cluster *sd
 	return c.evaluateAndReportStatus(event, cluster, resources)
 }
 
+// enrichClusterWithControllerStatuses fetches individual controller statuses and
+// attaches them to the cluster's status as a map keyed by controller name.
+// This allows templates and preconditions to access other controllers' metadata
+// (e.g., the resolved release image from the version resolution controller).
+func (c *Controller) enrichClusterWithControllerStatuses(ctx context.Context, apiClient sdk.APIClient, cluster *sdk.Cluster) {
+	statusResponse, err := apiClient.GetClusterStatus(ctx, cluster.ID)
+	if err != nil {
+		c.logger.Debug("Could not fetch cluster status, continuing without controller statuses",
+			zap.String("cluster_id", cluster.ID),
+			zap.Error(err),
+		)
+		return
+	}
+
+	if len(statusResponse.ControllerStatus) == 0 {
+		return
+	}
+
+	// Use the aggregated status from the status endpoint
+	if statusResponse.Status != nil {
+		cluster.Status = statusResponse.Status
+	}
+	if cluster.Status == nil {
+		cluster.Status = &sdk.ClusterStatusInfo{}
+	}
+
+	// Build map keyed by controller name
+	cluster.Status.ControllerStatuses = make(map[string]sdk.ControllerStatusInfo, len(statusResponse.ControllerStatus))
+	for _, cs := range statusResponse.ControllerStatus {
+		if cs != nil {
+			cluster.Status.ControllerStatuses[cs.ControllerName] = *cs
+		}
+	}
+
+	c.logger.Debug("Enriched cluster with controller statuses",
+		zap.String("cluster_id", cluster.ID),
+		zap.Int("controller_count", len(cluster.Status.ControllerStatuses)),
+	)
+}
+
+// handleVersionResolution handles cluster events for the version resolution controller.
+// It reads release.version from the cluster spec, resolves it to a release image via Cincinnati,
+// and reports the result as status metadata.
+func (c *Controller) handleVersionResolution(event *sdk.ClusterEvent, cluster *sdk.Cluster) error {
+	log := c.logger.With(
+		zap.String("cluster_id", event.ClusterID),
+		zap.String("event_type", event.Type),
+	)
+
+	if c.cincinnatiClient == nil {
+		log.Debug("No Cincinnati client configured, skipping version resolution")
+		return nil
+	}
+
+	// Parse cluster spec to extract release.version and release.channelGroup
+	var spec map[string]interface{}
+	if err := json.Unmarshal(cluster.Spec, &spec); err != nil {
+		return c.reportError(event, "SpecParseFailed", fmt.Errorf("failed to parse cluster spec: %w", err))
+	}
+
+	release, ok := spec["release"].(map[string]interface{})
+	if !ok {
+		log.Debug("No release spec found, skipping version resolution")
+		return nil
+	}
+
+	version, _ := release["version"].(string)
+	if version == "" {
+		log.Debug("No release.version in spec, skipping version resolution")
+		return nil
+	}
+
+	channelGroup, _ := release["channelGroup"].(string)
+	if channelGroup == "" {
+		channelGroup = "stable"
+	}
+
+	log.Info("Resolving version via Cincinnati",
+		zap.String("version", version),
+		zap.String("channel_group", channelGroup),
+	)
+
+	ctx := context.Background()
+	resolvedImage, err := c.cincinnatiClient.ResolveVersion(ctx, version, channelGroup, "amd64")
+
+	update := sdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
+
+	if err != nil {
+		log.Error("Failed to resolve version", zap.Error(err))
+		update.SetAppliedFalse("ResolutionFailed",
+			fmt.Sprintf("Failed to resolve version %s: %v", version, err))
+	} else {
+		log.Info("Version resolved successfully",
+			zap.String("version", version),
+			zap.String("image", resolvedImage),
+		)
+		update.SetMetadata("release_image", resolvedImage)
+		update.SetMetadata("release_version", version)
+		update.SetMetadata("release_channel_group", channelGroup)
+		update.SetAppliedTrue("VersionResolved",
+			fmt.Sprintf("Resolved %s to %s", version, resolvedImage))
+	}
+
+	return c.sdkClient.ReportStatus(update)
+}
+
 // validateControllerConfig validates a controller configuration
 func (c *Controller) validateControllerConfig(config *crd.ControllerConfig) error {
 	if config.Spec.Name == "" {
 		return fmt.Errorf("controller name is required")
 	}
 
-	if len(config.Spec.Resources) == 0 {
-		return fmt.Errorf("at least one resource must be defined")
-	}
-
+	// Resources are optional — status-only controllers (e.g., version resolution) have none
 	for i, resource := range config.Spec.Resources {
 		if resource.Name == "" {
 			return fmt.Errorf("resource[%d]: name is required", i)

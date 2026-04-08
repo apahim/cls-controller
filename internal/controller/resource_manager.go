@@ -37,8 +37,16 @@ func (c *Controller) evaluatePreconditions(cluster *sdk.Cluster) bool {
 		clusterData["spec"] = spec
 	}
 
-	// TODO: Add cluster status when available in cluster object
-	// For now, we don't have status in the cluster object from the API
+	// Add cluster status for precondition evaluation (e.g., checking version resolution)
+	if cluster.Status != nil {
+		statusBytes, err := json.Marshal(cluster.Status)
+		if err == nil {
+			var status map[string]interface{}
+			if err := json.Unmarshal(statusBytes, &status); err == nil {
+				clusterData["status"] = status
+			}
+		}
+	}
 
 	// All preconditions must be true
 	for _, precondition := range c.controllerConfig.Spec.Preconditions {

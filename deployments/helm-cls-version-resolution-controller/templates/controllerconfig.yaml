@@ -1,0 +1,18 @@
+apiVersion: cls.redhat.com/v1alpha1
+kind: ControllerConfig
+metadata:
+  name: {{ .Values.controller.name }}
+  namespace: {{ .Values.controller.namespace }}
+spec:
+  name: "{{ .Values.controller.name }}"
+  description: "Resolves OCP versions to release images via Cincinnati and reports as status condition"
+
+  preconditions:
+    - field: "spec.release.version"
+      operator: "exists"
+
+  # No resources — this is a status-only controller.
+  # It resolves versions via Cincinnati and reports the result as a status condition.
+  resources: []
+
+  statusConditions: []

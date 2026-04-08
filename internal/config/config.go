@@ -45,6 +45,9 @@ type Config struct {
 	// Template configuration
 	TemplateTimeout time.Duration `mapstructure:"template_timeout"`
 
+	// Cincinnati configuration for version resolution
+	CincinnatiBaseURL string `mapstructure:"cincinnati_base_url"`
+
 	// SDK configuration (derived from above)
 	SDKConfig sdk.Config
 }
@@ -106,6 +109,7 @@ func bindEnvVars(v *viper.Viper) {
 		"metrics_addr":           "METRICS_ADDR",
 		"probe_addr":             "PROBE_ADDR",
 		"enable_leader_election": "ENABLE_LEADER_ELECTION",
+		"cincinnati_base_url":    "CINCINNATI_BASE_URL",
 	}
 
 	for key, env := range envVars {
