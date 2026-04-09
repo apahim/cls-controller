@@ -115,6 +115,9 @@ spec:
             {{- if .Values.hypershift.controlPlaneOperatorImage }}
             hypershift.openshift.io/control-plane-operator-image: {{ .Values.hypershift.controlPlaneOperatorImage }}
             {{- end }}
+            {{- if .Values.hypershift.capgImage }}
+            hypershift.openshift.io/capi-provider-gcp-image: {{ .Values.hypershift.capgImage }}
+            {{- end }}
         spec:
           release:
             image: {{`{{ (index .cluster.status.controller_statuses "cls-version-resolution-controller").metadata.release_image }}`}}
