@@ -121,6 +121,7 @@ spec:
         spec:
           release:
             image: {{`{{ (index .cluster.status.controller_statuses "cls-version-resolution-controller").metadata.release_image }}`}}
+          channel: {{`{{ (index .cluster.status.controller_statuses "cls-version-resolution-controller").metadata.release_channel }}`}}
 
           controllerAvailabilityPolicy: {{ .Values.hostedCluster.controllerAvailabilityPolicy }}
 
