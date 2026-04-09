@@ -49,12 +49,13 @@ func NewClient(baseURL string, timeout time.Duration) *Client {
 	}
 }
 
-// ResolveVersion queries Cincinnati for the given version and returns the release image pullspec.
-// It derives the channel from the channelGroup and the major.minor of the version.
+// ResolveVersion queries Cincinnati for the given version and returns the release image pullspec
+// and the derived channel name. It derives the channel from the channelGroup and the major.minor
+// of the version.
 // For example: version "4.22.0-ec.4" with channelGroup "candidate" queries channel "candidate-4.22".
-func (c *Client) ResolveVersion(ctx context.Context, version, channelGroup, arch string) (string, error) {
+func (c *Client) ResolveVersion(ctx context.Context, version, channelGroup, arch string) (image string, channel string, err error) {
 	if version == "" {
-		return "", fmt.Errorf("version is required")
+		return "", "", fmt.Errorf("version is required")
 	}
 	if channelGroup == "" {
 		channelGroup = "stable"
@@ -63,26 +64,26 @@ func (c *Client) ResolveVersion(ctx context.Context, version, channelGroup, arch
 		arch = DefaultArch
 	}
 
-	channel, err := deriveChannel(version, channelGroup)
+	channel, err = deriveChannel(version, channelGroup)
 	if err != nil {
-		return "", err
+		return "", "", err
 	}
 
 	graph, err := c.fetchGraph(ctx, channel, arch)
 	if err != nil {
-		return "", fmt.Errorf("failed to fetch Cincinnati graph for channel %s: %w", channel, err)
+		return "", "", fmt.Errorf("failed to fetch Cincinnati graph for channel %s: %w", channel, err)
 	}
 
 	for _, node := range graph.Nodes {
 		if node.Version == version {
 			if node.Payload == "" {
-				return "", fmt.Errorf("version %s found in channel %s but has no payload image", version, channel)
+				return "", "", fmt.Errorf("version %s found in channel %s but has no payload image", version, channel)
 			}
-			return node.Payload, nil
+			return node.Payload, channel, nil
 		}
 	}
 
-	return "", fmt.Errorf("version %s not found in channel %s", version, channel)
+	return "", "", fmt.Errorf("version %s not found in channel %s", version, channel)
 }
 
 // deriveChannel derives the Cincinnati channel name from a version and channel group.

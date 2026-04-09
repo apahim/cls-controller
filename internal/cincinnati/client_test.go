@@ -78,9 +78,10 @@ func TestResolveVersion(t *testing.T) {
 
 	client := NewClient(server.URL, 5*time.Second)
 
-	image, err := client.ResolveVersion(context.Background(), "4.22.0-ec.4", "candidate", "amd64")
+	image, channel, err := client.ResolveVersion(context.Background(), "4.22.0-ec.4", "candidate", "amd64")
 	require.NoError(t, err)
 	assert.Equal(t, "quay.io/openshift-release-dev/ocp-release@sha256:abc123", image)
+	assert.Equal(t, "candidate-4.22", channel)
 }
 
 func TestResolveVersion_NotFound(t *testing.T) {
@@ -98,14 +99,14 @@ func TestResolveVersion_NotFound(t *testing.T) {
 
 	client := NewClient(server.URL, 5*time.Second)
 
-	_, err := client.ResolveVersion(context.Background(), "4.22.0-ec.4", "candidate", "amd64")
+	_, _, err := client.ResolveVersion(context.Background(), "4.22.0-ec.4", "candidate", "amd64")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "not found")
 }
 
 func TestResolveVersion_EmptyVersion(t *testing.T) {
 	client := NewClient("http://unused", 5*time.Second)
-	_, err := client.ResolveVersion(context.Background(), "", "candidate", "amd64")
+	_, _, err := client.ResolveVersion(context.Background(), "", "candidate", "amd64")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "version is required")
 }
@@ -125,9 +126,10 @@ func TestResolveVersion_DefaultChannelGroup(t *testing.T) {
 
 	client := NewClient(server.URL, 5*time.Second)
 
-	image, err := client.ResolveVersion(context.Background(), "4.22.0", "", "")
+	image, channel, err := client.ResolveVersion(context.Background(), "4.22.0", "", "")
 	require.NoError(t, err)
 	assert.Equal(t, "quay.io/openshift-release-dev/ocp-release@sha256:stable123", image)
+	assert.Equal(t, "stable-4.22", channel)
 }
 
 func TestResolveVersion_ServerError(t *testing.T) {
@@ -139,7 +141,7 @@ func TestResolveVersion_ServerError(t *testing.T) {
 
 	client := NewClient(server.URL, 5*time.Second)
 
-	_, err := client.ResolveVersion(context.Background(), "4.22.0", "stable", "amd64")
+	_, _, err := client.ResolveVersion(context.Background(), "4.22.0", "stable", "amd64")
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "status 500")
 }

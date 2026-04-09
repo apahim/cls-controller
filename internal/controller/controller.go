@@ -4,7 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"strings"
 	"time"
 
 	"github.com/apahim/cls-controller/internal/cincinnati"
@@ -464,7 +463,7 @@ func (c *Controller) handleVersionResolution(event *sdk.ClusterEvent, cluster *s
 	)
 
 	ctx := context.Background()
-	resolvedImage, err := c.cincinnatiClient.ResolveVersion(ctx, version, channelGroup, "amd64")
+	resolvedImage, resolvedChannel, err := c.cincinnatiClient.ResolveVersion(ctx, version, channelGroup, "amd64")
 
 	update := sdk.NewStatusUpdate(event.ClusterID, c.config.ControllerName, event.Generation)
 
@@ -476,18 +475,12 @@ func (c *Controller) handleVersionResolution(event *sdk.ClusterEvent, cluster *s
 		log.Info("Version resolved successfully",
 			zap.String("version", version),
 			zap.String("image", resolvedImage),
+			zap.String("channel", resolvedChannel),
 		)
-		// Derive the Cincinnati channel name (e.g., "candidate-4.22") for the HostedCluster spec
-		major := strings.SplitN(version, ".", 3)
-		channel := ""
-		if len(major) >= 2 {
-			channel = fmt.Sprintf("%s-%s.%s", channelGroup, major[0], major[1])
-		}
-
 		update.SetMetadata("release_image", resolvedImage)
 		update.SetMetadata("release_version", version)
 		update.SetMetadata("release_channel_group", channelGroup)
-		update.SetMetadata("release_channel", channel)
+		update.SetMetadata("release_channel", resolvedChannel)
 		update.SetAppliedTrue("VersionResolved",
 			fmt.Sprintf("Resolved %s to %s", version, resolvedImage))
 	}
