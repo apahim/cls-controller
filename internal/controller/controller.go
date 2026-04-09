@@ -277,6 +277,9 @@ func (c *Controller) HandleNodePoolEvent(event *sdk.NodePoolEvent) error {
 		zap.String("cluster_id", cluster.ID),
 	)
 
+	// Enrich cluster with controller statuses so templates can access them
+	c.enrichClusterWithControllerStatuses(ctx, apiClient, cluster)
+
 	// Check preconditions for nodepool
 	if !c.evaluateNodePoolPreconditions(nodepool) {
 		log.Info("Preconditions not met, skipping resource creation")
