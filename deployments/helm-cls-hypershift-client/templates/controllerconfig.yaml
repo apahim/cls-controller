@@ -207,6 +207,8 @@ spec:
               - ImageRegistry
               # Disable Console pending investigation into OIDC client registration and GCP routing. GCP-415
               - Console
+              # Disable Ingress until LB configuration, DNS integration and network connectivity are validated. GCP-314
+              - Ingress
 
           configuration:
             authentication:
