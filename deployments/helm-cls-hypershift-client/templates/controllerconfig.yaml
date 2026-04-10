@@ -205,6 +205,8 @@ spec:
             disabled:
               # Disable ImageRegistry as GCS buckets not well supported yet. GCP-235
               - ImageRegistry
+              # Disable Console pending investigation into OIDC client registration and GCP routing. GCP-415
+              - Console
 
           configuration:
             authentication:
