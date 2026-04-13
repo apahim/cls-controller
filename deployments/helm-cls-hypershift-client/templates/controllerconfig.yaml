@@ -12,6 +12,10 @@ spec:
     secretRef:
       name: "{{ .Values.remoteCluster.secretName }}"
 
+  preconditions:
+    - field: "status.controller_statuses.cls-version-resolution-controller.metadata.release_image"
+      operator: "exists"
+
   resources:
     - name: "namespace"
       description: "Create a namespace to host the HostedCluster resource"
@@ -111,9 +115,13 @@ spec:
             {{- if .Values.hypershift.controlPlaneOperatorImage }}
             hypershift.openshift.io/control-plane-operator-image: {{ .Values.hypershift.controlPlaneOperatorImage }}
             {{- end }}
+            {{- if .Values.hypershift.capgImage }}
+            hypershift.openshift.io/capi-provider-gcp-image: {{ .Values.hypershift.capgImage }}
+            {{- end }}
         spec:
           release:
-            image: quay.io/openshift-release-dev/ocp-release:4.20.0-x86_64
+            image: {{`{{ (index .cluster.status.controller_statuses "cls-version-resolution-controller").metadata.release_image }}`}}
+          channel: {{`{{ (index .cluster.status.controller_statuses "cls-version-resolution-controller").metadata.release_channel }}`}}
 
           controllerAvailabilityPolicy: {{ .Values.hostedCluster.controllerAvailabilityPolicy }}
 
@@ -197,6 +205,10 @@ spec:
             disabled:
               # Disable ImageRegistry as GCS buckets not well supported yet. GCP-235
               - ImageRegistry
+              # Disable Console pending investigation into OIDC client registration and GCP routing. GCP-415
+              - Console
+              # Disable Ingress until LB configuration, DNS integration and network connectivity are validated. GCP-314
+              - Ingress
 
           configuration:
             authentication:

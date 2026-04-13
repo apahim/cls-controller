@@ -42,6 +42,8 @@ pullSecret:
 hypershift:
   # Optional: Override control plane operator image for testing in dev/integration environments
   controlPlaneOperatorImage: ""
+  # Optional: Override CAPI provider GCP image (pin to v1beta1-compatible version until v2 CRDs are available)
+  capgImage: ""
 
 # HostedCluster configuration
 hostedCluster:

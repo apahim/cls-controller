@@ -61,6 +61,10 @@ func (m *MockAPIClient) GetNodePool(ctx context.Context, nodepoolID string) (*sd
 	return nil, nil
 }
 
+func (m *MockAPIClient) GetClusterStatus(ctx context.Context, clusterID string) (*sdk.ClusterStatusResponse, error) {
+	return &sdk.ClusterStatusResponse{ClusterID: clusterID}, nil
+}
+
 func (m *MockAPIClient) ReportClusterStatus(ctx context.Context, update *sdk.StatusUpdate) error {
 	return nil
 }

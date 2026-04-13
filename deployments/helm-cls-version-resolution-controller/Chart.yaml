@@ -1,0 +1,22 @@
+apiVersion: v2
+name: cls-version-resolution-controller
+description: A Helm chart for cls-version-resolution-controller that resolves OCP versions to release images via Cincinnati
+type: application
+version: 0.1.0
+appVersion: "1.0.0"
+keywords:
+  - cls-controller
+  - version-resolution
+  - cincinnati
+  - openshift
+  - kubernetes
+  - gcp
+  - config-connector
+home: https://github.com/your-org/cls-controller
+sources:
+  - https://github.com/your-org/cls-controller
+maintainers:
+  - name: CLS Team
+    email: cls-team@example.com
+annotations:
+  category: Controllers

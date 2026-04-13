@@ -49,7 +49,7 @@ spec:
               {{`{{- end }}`}}
             {{`{{- end }}`}}
           release:
-            image: {{`{{ .nodepool.spec.release.image | default "quay.io/openshift-release-dev/ocp-release:4.20.0-x86_64" }}`}}
+            image: {{`{{ (index .cluster.status.controller_statuses "cls-version-resolution-controller").metadata.release_image }}`}}
           platform:
             type: {{`{{ .nodepool.spec.platform.type }}`}}
             {{`{{- if eq .nodepool.spec.platform.type "GCP" }}`}}
