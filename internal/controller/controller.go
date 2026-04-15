@@ -474,6 +474,8 @@ func (c *Controller) handleVersionResolution(event *sdk.ClusterEvent, cluster *s
 		log.Error("Failed to resolve version", zap.Error(err))
 		update.SetAppliedFalse("ResolutionFailed",
 			fmt.Sprintf("Failed to resolve version %s: %v", version, err))
+		update.SetAvailableFalse("ResolutionFailed",
+			fmt.Sprintf("Failed to resolve version %s: %v", version, err))
 	} else {
 		log.Info("Version resolved successfully",
 			zap.String("version", version),
@@ -485,6 +487,8 @@ func (c *Controller) handleVersionResolution(event *sdk.ClusterEvent, cluster *s
 		update.SetMetadata("release_channel_group", channelGroup)
 		update.SetMetadata("release_channel", resolvedChannel)
 		update.SetAppliedTrue("VersionResolved",
+			fmt.Sprintf("Resolved %s to %s", version, resolvedImage))
+		update.SetAvailableTrue("VersionResolved",
 			fmt.Sprintf("Resolved %s to %s", version, resolvedImage))
 	}
 
