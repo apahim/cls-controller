@@ -147,6 +147,7 @@ spec:
                   cloudController: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.cloudControllerEmail }}`}}
                   storage: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.storageEmail }}`}}
                   imageRegistry: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.imageRegistryEmail }}`}}
+                  network: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.networkEmail }}`}}
             {{`{{- else }}`}}
             type: None
             {{`{{- end }}`}}
