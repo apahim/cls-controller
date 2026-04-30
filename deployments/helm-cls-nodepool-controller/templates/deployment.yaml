@@ -8,7 +8,7 @@ metadata:
 spec:
   # TODO: Re-all support to configure
   # replicas: {{ .Values.controller.replicas }}
-  replicas: 1
+  replicas: {{ .Values.controller.replicas }}
   selector:
     matchLabels:
       app.kubernetes.io/name: {{ .Values.controller.name }}
