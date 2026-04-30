@@ -148,6 +148,12 @@ spec:
                   storage: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.storageEmail }}`}}
                   imageRegistry: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.imageRegistryEmail }}`}}
                   network: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.networkEmail }}`}}
+              {{- if .Values.hostedCluster.etcdBackup.enabled }}
+              etcdBackup:
+                bucket: {{ .Values.hostedCluster.etcdBackup.bucket }}
+                schedule: {{ .Values.hostedCluster.etcdBackup.schedule | quote }}
+                gcpServiceAccount: {{ .Values.hostedCluster.etcdBackup.gcpServiceAccount }}
+              {{- end }}
             {{`{{- else }}`}}
             type: None
             {{`{{- end }}`}}
