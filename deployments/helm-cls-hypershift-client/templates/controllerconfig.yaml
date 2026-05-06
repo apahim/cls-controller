@@ -148,12 +148,6 @@ spec:
                   storage: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.storageEmail }}`}}
                   imageRegistry: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.imageRegistryEmail }}`}}
                   network: {{`{{ .cluster.spec.platform.gcp.workloadIdentity.serviceAccountsRef.networkEmail }}`}}
-              {{- if .Values.hostedCluster.etcdBackup.enabled }}
-              etcdBackup:
-                bucket: {{ .Values.hostedCluster.etcdBackup.bucket }}
-                schedule: {{ .Values.hostedCluster.etcdBackup.schedule | quote }}
-                gcpServiceAccount: {{ .Values.hostedCluster.etcdBackup.gcpServiceAccount }}
-              {{- end }}
             {{`{{- else }}`}}
             type: None
             {{`{{- end }}`}}
@@ -167,6 +161,23 @@ spec:
             serviceNetwork:
               - cidr: 172.31.0.0/16
             networkType: OVNKubernetes
+
+          etcd:
+            managementType: Managed
+            managed:
+              storage:
+                type: PersistentVolume
+                persistentVolume:
+                  size: 8Gi
+              {{- if .Values.hostedCluster.etcdBackup.enabled }}
+              automatedBackup:
+                schedule: {{ .Values.hostedCluster.etcdBackup.schedule | quote }}
+                storage:
+                  type: GCS
+                  gcs:
+                    bucket: {{ .Values.hostedCluster.etcdBackup.bucket }}
+                    gcpServiceAccount: {{ .Values.hostedCluster.etcdBackup.gcpServiceAccount }}
+              {{- end }}
 
           {{- $domains := splitList "," .Values.hc_dns_domains }}
           {{- $baseDomain := index $domains 0 | trim }}
